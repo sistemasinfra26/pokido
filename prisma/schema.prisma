@@ -1,0 +1,473 @@
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ==========================================
+// 1. ENUMS
+// ==========================================
+
+enum UserRole {
+  SUPERADMIN
+  ADMIN
+  MANAGER
+  CASHIER
+  STAFF
+  CUSTOMER
+}
+
+enum TicketStatus {
+  ACTIVE
+  IN_USE
+  USED
+  EXPIRED
+  CANCELLED
+}
+
+enum WristbandStatus {
+  AVAILABLE
+  ASSIGNED
+  IN_PARK
+  COMPLETED
+  LOST
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PaymentMethod {
+  CASH
+  CREDIT_CARD
+  DEBIT_CARD
+  TRANSFER
+  QR_DIGITAL
+  MERCADOPAGO
+  STRIPE
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REFUNDED
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum MovementType {
+  INITIAL
+  PURCHASE
+  SALE
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  WASTE
+  RETURN
+}
+
+// ==========================================
+// 2. USUARIOS Y PERFILES (AUTH SUPABASE)
+// ==========================================
+
+model Profile {
+  id          String    @id @default(uuid())
+  authUserId  String?   @unique @map("auth_user_id") // ID referenciado de auth.users de Supabase
+  email       String    @unique
+  fullName    String    @map("full_name")
+  phone       String?
+  dni         String?   @unique
+  role        UserRole  @default(STAFF)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relaciones
+  cashShifts          CashShift[]
+  orders              Order[]
+  inventoryMovements  InventoryMovement[]
+  accessLogs          AccessLog[]
+
+  @@map("profiles")
+}
+
+// ==========================================
+// 3. CLIENTES, MENORES Y DESLINDES (WAIVERS)
+// ==========================================
+
+model Customer {
+  id          String    @id @default(uuid())
+  dni         String    @unique
+  fullName    String    @map("full_name")
+  email       String?   @unique
+  phone       String?
+  address     String?
+  birthDate   DateTime? @map("birth_date")
+  notes       String?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relaciones
+  minors      Minor[]
+  waivers     Waiver[]
+  bookings    Booking[]
+  orders      Order[]
+  tickets     Ticket[]
+
+  @@map("customers")
+}
+
+model Minor {
+  id              String    @id @default(uuid())
+  customerId      String    @map("customer_id")
+  fullName        String    @map("full_name")
+  birthDate       DateTime  @map("birth_date")
+  medicalNotes    String?   @map("medical_notes") // Alergias, condiciones especiales
+  emergencyPhone  String?   @map("emergency_phone")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tickets         Ticket[]
+
+  @@map("minors")
+}
+
+model Waiver {
+  id              String    @id @default(uuid())
+  customerId      String    @map("customer_id")
+  signatureUrl    String?   @map("signature_url") // URL de la firma digital almacenada en Supabase Storage
+  ipAddress       String?   @map("ip_address")
+  signedAt        DateTime  @default(now()) @map("signed_at")
+  expiresAt       DateTime  @map("expires_at") // Validez estándar de 1 año
+  isValid         Boolean   @default(true) @map("is_valid")
+  termsVersion    String    @default("1.0") @map("terms_version")
+
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("waivers")
+}
+
+// ==========================================
+// 4. TIPOS DE ENTRADA, TICKETS Y PULSERAS
+// ==========================================
+
+model TicketType {
+  id              String    @id @default(uuid())
+  name            String    // Ej: "Pase 60 Minutos", "Pase 120 Minutos", "Calcetines Antideslizantes"
+  description     String?
+  durationMinutes Int       @default(60) @map("duration_minutes") // 0 si no tiene tiempo límite (ej. calcetines)
+  price           Decimal   @db.Decimal(10, 2)
+  colorCode       String?   @map("color_code") // Color de pulsera recomendado
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  tickets         Ticket[]
+  orderItems      OrderItem[]
+
+  @@map("ticket_types")
+}
+
+model Ticket {
+  id              String        @id @default(uuid())
+  ticketTypeId    String        @map("ticket_type_id")
+  customerId      String?       @map("customer_id")
+  minorId         String?       @map("minor_id")
+  orderId         String?       @map("order_id")
+  bookingId       String?       @map("booking_id")
+  qrCode          String        @unique @map("qr_code") // Código QR único para validación
+  price           Decimal       @db.Decimal(10, 2)
+  validDate       DateTime      @map("valid_date") @db.Date
+  startTime       DateTime?     @map("start_time")
+  endTime         DateTime?     @map("end_time")
+  status          TicketStatus  @default(ACTIVE)
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  ticketType      TicketType    @relation(fields: [ticketTypeId], references: [id])
+  customer        Customer?     @relation(fields: [customerId], references: [id])
+  minor           Minor?        @relation(fields: [minorId], references: [id])
+  order           Order?        @relation(fields: [orderId], references: [id])
+  booking         Booking?      @relation(fields: [bookingId], references: [id])
+  wristband       Wristband?
+  accessLogs      AccessLog[]
+
+  @@map("tickets")
+}
+
+model Wristband {
+  id          String          @id @default(uuid())
+  ticketId    String?         @unique @map("ticket_id")
+  code        String          @unique // Código o número de pulsera / RFID
+  color       String          // Color de franja horaria
+  status      WristbandStatus @default(AVAILABLE)
+  assignedAt  DateTime?       @map("assigned_at")
+  returnedAt  DateTime?       @map("returned_at")
+  createdAt   DateTime        @default(now()) @map("created_at")
+
+  ticket      Ticket?         @relation(fields: [ticketId], references: [id], onDelete: SetNull)
+
+  @@map("wristbands")
+}
+
+model AccessLog {
+  id          String    @id @default(uuid())
+  ticketId    String    @map("ticket_id")
+  staffId     String?   @map("staff_id")
+  action      String    // "ENTRY", "EXIT", "CHECK_TIME"
+  timestamp   DateTime  @default(now())
+  details     String?
+
+  ticket      Ticket    @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  staff       Profile?  @relation(fields: [staffId], references: [id])
+
+  @@map("access_logs")
+}
+
+// ==========================================
+// 5. EVENTOS, CUMPLEAÑOS Y SALAS
+// ==========================================
+
+model PartyRoom {
+  id          String    @id @default(uuid())
+  name        String    // Ej: "Sala Galaxia", "Sala Aventura"
+  capacity    Int       @default(30)
+  color       String?
+  description    String?   
+  imageUrl       String?   @map("image_url") 
+  recommendedFor String?   @map("recommended_for")
+  includes       String[]
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  bookings    Booking[]
+
+  @@map("party_rooms")
+}
+
+model PartyPackage {
+  id              String    @id @default(uuid())
+  name            String    // Ej: "Pack Pokido Básico", "Pack Premium VIP"
+  description     String?
+  basePrice       Decimal   @map("base_price") @db.Decimal(10, 2)
+  minGuests       Int       @default(10) @map("min_guests")
+  extraGuestPrice Decimal   @default(0) @map("extra_guest_price") @db.Decimal(10, 2)
+  durationMinutes Int       @default(150) @map("duration_minutes") // 2.5 horas
+  includesFood    Boolean   @default(true) @map("includes_food")
+  includesSocks   Boolean   @default(true) @map("includes_socks")
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  bookings        Booking[]
+
+  @@map("party_packages")
+}
+
+model Booking {
+  id              String        @id @default(uuid())
+  customerId      String        @map("customer_id")
+  roomId          String?       @map("room_id")
+  packageId       String?       @map("package_id")
+  birthdayChild   String?       @map("birthday_child") // Nombre del cumpleañero
+  childAge        Int?          @map("child_age")
+  guestCount      Int           @default(10) @map("guest_count")
+  date            DateTime      @db.Date
+  startTime       String        @map("start_time") // Ej: "16:00"
+  endTime         String        @map("end_time")   // Ej: "18:30"
+  status          BookingStatus @default(PENDING)
+  totalPrice      Decimal       @map("total_price") @db.Decimal(10, 2)
+  depositPaid     Decimal       @default(0) @map("deposit_paid") @db.Decimal(10, 2)
+  notes           String?
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  customer        Customer      @relation(fields: [customerId], references: [id])
+  room            PartyRoom?    @relation(fields: [roomId], references: [id])
+  package         PartyPackage? @relation(fields: [packageId], references: [id])
+  tickets         Ticket[]
+  orders          Order[]
+
+  @@map("bookings")
+}
+
+// ==========================================
+// 6. POS, CAFETERÍA, PRODUCTOS E INVENTARIO
+// ==========================================
+
+model Category {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  order       Int       @default(0)
+  isActive    Boolean   @default(true) @map("is_active")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  products    Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id              String    @id @default(uuid())
+  categoryId      String    @map("category_id")
+  name            String
+  sku             String?   @unique
+  barcode         String?   @unique
+  description     String?
+  price           Decimal   @db.Decimal(10, 2)
+  costPrice       Decimal   @default(0) @map("cost_price") @db.Decimal(10, 2)
+  stock           Int       @default(0)
+  minStock        Int       @default(5) @map("min_stock")
+  trackStock      Boolean   @default(true) @map("track_stock")
+  imageUrl        String?   @map("image_url")
+  isActive        Boolean   @default(true) @map("is_active")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  category        Category  @relation(fields: [categoryId], references: [id])
+  orderItems      OrderItem[]
+  inventoryMovements InventoryMovement[]
+
+  @@map("products")
+}
+
+model InventoryMovement {
+  id          String        @id @default(uuid())
+  productId   String        @map("product_id")
+  staffId     String?       @map("staff_id")
+  type        MovementType
+  quantity    Int           // Positivo o negativo según el tipo
+  stockBefore Int           @map("stock_before")
+  stockAfter  Int           @map("stock_after")
+  reason      String?
+  createdAt   DateTime      @default(now()) @map("created_at")
+
+  product     Product       @relation(fields: [productId], references: [id])
+  staff       Profile?      @relation(fields: [staffId], references: [id])
+
+  @@map("inventory_movements")
+}
+
+// ==========================================
+// 7. PEDIDOS, CAJAS, TURNOS Y PAGOS
+// ==========================================
+
+model CashRegister {
+  id          String      @id @default(uuid())
+  name        String      // Ej: "Caja Principal 1", "Caja Cafetería"
+  branchName  String      @default("Pokidopark Central") @map("branch_name")
+  isActive    Boolean     @default(true) @map("is_active")
+  createdAt   DateTime    @default(now()) @map("created_at")
+  updatedAt   DateTime    @updatedAt @map("updated_at")
+
+  shifts      CashShift[]
+  orders      Order[]
+
+  @@map("cash_registers")
+}
+
+model CashShift {
+  id              String      @id @default(uuid())
+  cashRegisterId  String      @map("cash_register_id")
+  staffId         String      @map("staff_id")
+  openedAt        DateTime    @default(now()) @map("opened_at")
+  closedAt        DateTime?   @map("closed_at")
+  initialCash     Decimal     @map("initial_cash") @db.Decimal(10, 2)
+  expectedCash    Decimal?    @map("expected_cash") @db.Decimal(10, 2)
+  actualCash      Decimal?    @map("actual_cash") @db.Decimal(10, 2)
+  difference      Decimal?    @db.Decimal(10, 2)
+  status          ShiftStatus @default(OPEN)
+  notes           String?
+
+  cashRegister    CashRegister @relation(fields: [cashRegisterId], references: [id])
+  staff           Profile      @relation(fields: [staffId], references: [id])
+  orders          Order[]
+  payments        Payment[]
+
+  @@map("cash_shifts")
+}
+
+model Order {
+  id              String        @id @default(uuid())
+  orderNumber     String        @unique @map("order_number") // Ej: "ORD-2026-0001"
+  customerId      String?       @map("customer_id")
+  staffId         String?       @map("staff_id")
+  cashRegisterId  String?       @map("cash_register_id")
+  shiftId         String?       @map("shift_id")
+  bookingId       String?       @map("booking_id")
+  subtotal        Decimal       @db.Decimal(10, 2)
+  discount        Decimal       @default(0) @db.Decimal(10, 2)
+  tax             Decimal       @default(0) @db.Decimal(10, 2)
+  total           Decimal       @db.Decimal(10, 2)
+  status          OrderStatus   @default(COMPLETED)
+  notes           String?
+  createdAt       DateTime      @default(now()) @map("created_at")
+  updatedAt       DateTime      @updatedAt @map("updated_at")
+
+  customer        Customer?     @relation(fields: [customerId], references: [id])
+  staff           Profile?      @relation(fields: [staffId], references: [id])
+  cashRegister    CashRegister? @relation(fields: [cashRegisterId], references: [id])
+  shift           CashShift?    @relation(fields: [shiftId], references: [id])
+  booking         Booking?      @relation(fields: [bookingId], references: [id])
+  items           OrderItem[]
+  payments        Payment[]
+  tickets         Ticket[]
+
+  @@map("orders")
+}
+
+model OrderItem {
+  id              String      @id @default(uuid())
+  orderId         String      @map("order_id")
+  productId       String?     @map("product_id")
+  ticketTypeId    String?     @map("ticket_type_id")
+  description     String      // Nombre guardado al momento de la venta
+  quantity        Int         @default(1)
+  unitPrice       Decimal     @map("unit_price") @db.Decimal(10, 2)
+  total           Decimal     @db.Decimal(10, 2)
+
+  order           Order       @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product         Product?    @relation(fields: [productId], references: [id])
+  ticketType      TicketType? @relation(fields: [ticketTypeId], references: [id])
+
+  @@map("order_items")
+}
+
+model Payment {
+  id            String        @id @default(uuid())
+  orderId       String        @map("order_id")
+  shiftId       String?       @map("shift_id")
+  amount        Decimal       @db.Decimal(10, 2)
+  method        PaymentMethod @default(CASH)
+  status        PaymentStatus @default(APPROVED)
+  transactionRef String?      @map("transaction_ref") // ID de transacción POS/Stripe/MercadoPago
+  createdAt     DateTime      @default(now()) @map("created_at")
+
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  shift         CashShift?    @relation(fields: [shiftId], references: [id])
+
+  @@map("payments")
+}

@@ -10,6 +10,12 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  --color-pokido-purple: #66448f;
+  --color-pokido-red: #d81422;
+  --color-pokido-green: #78b42e;
+  --color-pokido-orange: #e2750e;
+  --color-pokido-cyan: #27adb8;
 }
 
 @media (prefers-color-scheme: dark) {
