@@ -27,26 +27,31 @@ export function AttractionsSection() {
     ]
 
     return (
-        <section id="atracciones" className="py-20 bg-slate-900/50 border-y border-slate-800">
+        <section id="atracciones" className="py-20 bg-slate-100/70 border-y border-slate-200/80">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
                 <div className="text-center max-w-3xl mx-auto mb-16">
-                    <h2 className="text-3xl sm:text-4xl font-black text-white uppercase tracking-tight">
+                    <h2 className="text-3xl sm:text-4xl font-black text-slate-900 uppercase tracking-tight">
                         Nuestras <span className="text-pokido-orange">Atracciones</span>
                     </h2>
-                    <p className="text-slate-400 mt-4 text-lg">
+                    <p className="text-slate-600 mt-4 text-base sm:text-lg font-medium">
                         Diseñadas para maximizar la diversión bajo los más altos estándares de seguridad.
                     </p>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                     {attractions.map((item, index) => (
-                        <div key={index} className="bg-slate-950 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between hover:border-pokido-purple/50 transition">
+                        <div
+                            key={index}
+                            className="bg-white border border-slate-200 rounded-3xl p-6 flex flex-col justify-between hover:border-pokido-purple/50 hover:shadow-md transition shadow-xs"
+                        >
                             <div>
-                                <span className={`text-xs font-bold px-3 py-1 rounded-full border ${item.badgeColor}`}>
+                                <span className={`text-xs font-extrabold px-3 py-1 rounded-full border ${item.badgeColor}`}>
                                     {item.badge}
                                 </span>
-                                <h3 className="text-xl font-bold text-white mt-4 mb-2">{item.title}</h3>
-                                <p className="text-slate-400 text-sm leading-relaxed">{item.description}</p>
+                                <h3 className="text-xl font-black text-slate-900 mt-5 mb-2">{item.title}</h3>
+                                <p className="text-slate-500 text-xs sm:text-sm font-medium leading-relaxed">
+                                    {item.description}
+                                </p>
                             </div>
                         </div>
                     ))}

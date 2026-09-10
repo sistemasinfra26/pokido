@@ -11,23 +11,23 @@ interface TicketTypeItem {
     price: number
 }
 
+export interface MinorFormEntry {
+    id: string
+    fullName: string
+    age: string
+    wristbandCode: string
+    medicalNotes: string
+}
+
 interface MinorTicketStepProps {
-    minorName: string
-    setMinorName: (val: string) => void
-    minorAge: string
-    setMinorAge: (val: string) => void
     ticketType: string
     setTicketType: (val: string) => void
     setTicketPrice: (val: number) => void
-    wristbandCode: string
-    setWristbandCode: (val: string) => void
     entryTime: string
     setEntryTime: (val: string) => void
     selectedColorId: number
     setSelectedColorId: (val: number) => void
-    medicalNotes?: string
-    setMedicalNotes?: (val: string) => void
-    onAddMinorToCart: () => void
+    onAddMultipleMinorsToCart: (minors: MinorFormEntry[]) => void
 }
 
 const timeSlotsList = [
@@ -44,41 +44,36 @@ function parseDurationFromTicketType(typeStr: string): number {
     if (typeStr.includes("90")) return 90
     if (typeStr.includes("30")) return 30
     if (typeStr.includes("60")) return 60
-
     const match = typeStr.match(/(\d+)\s*min/i)
-    if (match && match[1]) {
-        return Number(match[1])
-    }
-
-    return 60
+    return match && match[1] ? Number(match[1]) : 60
 }
 
 export function MinorTicketStep({
-    minorName,
-    setMinorName,
-    minorAge,
-    setMinorAge,
     ticketType,
     setTicketType,
     setTicketPrice,
-    wristbandCode,
-    setWristbandCode,
     entryTime,
     setEntryTime,
     selectedColorId,
     setSelectedColorId,
-    medicalNotes = "",
-    setMedicalNotes,
-    onAddMinorToCart,
+    onAddMultipleMinorsToCart,
 }: MinorTicketStepProps) {
     const [ticketTypesList, setTicketTypesList] = useState<TicketTypeItem[]>([])
 
-    // 1. Cargar tarifas de la base de datos
+    // 🔑 Estado dinámico para manejar 1 o N niños simultáneamente en el formulario
+    const [minorsList, setMinorsList] = useState<MinorFormEntry[]>([
+        { id: "1", fullName: "", age: "", wristbandCode: "", medicalNotes: "" },
+    ])
+
     useEffect(() => {
         async function loadTypes() {
             const res = await getTicketTypes()
-            if (res.success && res.ticketTypes) {
-                const formattedTypes = res.ticketTypes.map((item: any) => ({
+
+            //  FIX: Evalúa res.ticketTypes o res.data de forma segura
+            const typesArray = res.success ? (res.ticketTypes || (res as any).data) : null
+
+            if (typesArray) {
+                const formattedTypes = typesArray.map((item: any) => ({
                     id: item.id,
                     name: item.name,
                     durationMinutes: item.durationMinutes,
@@ -92,14 +87,11 @@ export function MinorTicketStep({
 
     const duration = parseDurationFromTicketType(ticketType)
 
-    // 2. Sincronizar automáticamente el selector con la lista configurada cuando cambia la duración
     useEffect(() => {
         const found = ticketTypesList.find((t) => t.durationMinutes === duration)
         if (found) {
             const expectedTypeStr = `${found.name} ($${found.price.toLocaleString("es-CL")})`
-            if (ticketType !== expectedTypeStr) {
-                setTicketType(expectedTypeStr)
-            }
+            if (ticketType !== expectedTypeStr) setTicketType(expectedTypeStr)
             setTicketPrice(found.price)
         } else {
             if (duration === 120) setTicketPrice(14000)
@@ -109,7 +101,6 @@ export function MinorTicketStep({
         }
     }, [duration, ticketTypesList, setTicketPrice, setTicketType, ticketType])
 
-    // 3. Recalcular la pulsera sugerida
     useEffect(() => {
         if (entryTime) {
             const calculated = getWristbandColorForTime(entryTime, duration)
@@ -117,54 +108,60 @@ export function MinorTicketStep({
         }
     }, [entryTime, duration, setSelectedColorId])
 
-    const isFormValid = minorName.trim() !== "" && wristbandCode.trim() !== ""
+    // Funciones para manipular la lista de niños
+    const handleAddChildRow = () => {
+        setMinorsList((prev) => [
+            ...prev,
+            { id: Date.now().toString(), fullName: "", age: "", wristbandCode: "", medicalNotes: "" },
+        ])
+    }
+
+    const handleRemoveChildRow = (id: string) => {
+        if (minorsList.length === 1) return
+        setMinorsList((prev) => prev.filter((item) => item.id !== id))
+    }
+
+    const handleUpdateChildField = (id: string, field: keyof MinorFormEntry, value: string) => {
+        setMinorsList((prev) =>
+            prev.map((item) => (item.id === id ? { ...item, [field]: value } : item))
+        )
+    }
+
+    const handleSubmitAllToCart = () => {
+        const validMinors = minorsList.filter((m) => m.fullName.trim() !== "")
+        if (validMinors.length === 0) return
+
+        onAddMultipleMinorsToCart(validMinors)
+
+        // Resetea el formulario dejando una sola fila limpia
+        setMinorsList([{ id: Date.now().toString(), fullName: "", age: "", wristbandCode: "", medicalNotes: "" }])
+    }
+
     const activeColorObj: WristbandColorDef = WRISTBAND_COLORS[selectedColorId] || WRISTBAND_COLORS[1]
+    const hasValidMinors = minorsList.some((m) => m.fullName.trim() !== "")
 
     return (
-        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
-            <h2 className="font-bold text-slate-900 text-base flex items-center justify-between">
-                <span className="flex items-center gap-2">
+        <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-4">
+                <h2 className="font-bold text-slate-900 text-base flex items-center gap-2">
                     <span className="w-6 h-6 rounded-full bg-pokido-purple text-white text-xs flex items-center justify-center font-black">2</span>
-                    Asignación de Pase, Horario y Pulsera
-                </span>
+                    Asignación de Pase y Niños
+                </h2>
 
                 <div className={`px-3 py-1 rounded-full text-xs font-bold border flex items-center gap-2 ${activeColorObj.badgeClass}`}>
                     <span className={`w-3 h-3 rounded-full ${activeColorObj.bgClass} border border-black/10`} />
-                    <span>Pulsera: Color {activeColorObj.id}</span>
+                    <span>Pulsera Sugerida: Color {activeColorObj.id}</span>
                 </div>
-            </h2>
+            </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {/* NOMBRE Y EDAD */}
-                <div>
-                    <label className="text-xs font-bold text-slate-500 mb-1 block">Nombre del Niño/a *</label>
-                    <input
-                        type="text"
-                        placeholder="Ej. Lucas Gómez"
-                        value={minorName}
-                        onChange={(e) => setMinorName(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pokido-purple font-medium text-slate-800"
-                    />
-                </div>
-
-                <div>
-                    <label className="text-xs font-bold text-slate-500 mb-1 block">Edad</label>
-                    <input
-                        type="number"
-                        placeholder="Ej. 7"
-                        value={minorAge}
-                        onChange={(e) => setMinorAge(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pokido-purple font-medium text-slate-800"
-                    />
-                </div>
-
-                {/* PASE / DURACIÓN DINÁMICO */}
+            {/* CONFIGURACIÓN GLOBAL DE TURNO Y TICKET */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-slate-50 p-4 rounded-2xl border border-slate-200/80">
                 <div>
                     <label className="text-xs font-bold text-slate-500 mb-1 block">Pase / Tarifa Configurada</label>
                     <select
                         value={ticketType}
                         onChange={(e) => setTicketType(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pokido-purple font-medium text-slate-800"
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pokido-purple font-medium text-slate-800"
                     >
                         {ticketTypesList.length > 0 ? (
                             ticketTypesList.map((type) => (
@@ -183,81 +180,100 @@ export function MinorTicketStep({
                     </select>
                 </div>
 
-                {/* HORARIO DE INGRESO */}
                 <div>
                     <label className="text-xs font-bold text-slate-500 mb-1 block">Horario de Turno</label>
                     <select
                         value={entryTime}
                         onChange={(e) => setEntryTime(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pokido-purple font-medium text-slate-800"
+                        className="w-full bg-white border border-slate-200 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pokido-purple font-medium text-slate-800"
                     >
                         {timeSlotsList.map((slot) => (
-                            <option key={slot} value={slot}>
-                                Turno {slot} hs
-                            </option>
+                            <option key={slot} value={slot}>Turno {slot} hs</option>
                         ))}
                     </select>
                 </div>
-
-                {/* SELECTOR Y CAMBIO MANUAL DE COLOR */}
-                <div>
-                    <label className="text-xs font-bold text-slate-500 mb-1 block">Color de Pulsera Asignado</label>
-                    <div className="flex gap-2">
-                        {[1, 2, 3, 4].map((id) => {
-                            const col = WRISTBAND_COLORS[id]
-                            const isSelected = selectedColorId === id
-                            return (
-                                <button
-                                    key={id}
-                                    type="button"
-                                    onClick={() => setSelectedColorId(id)}
-                                    className={`flex-1 py-2.5 rounded-xl border font-extrabold text-xs transition flex items-center justify-center gap-1 cursor-pointer ${isSelected
-                                            ? `${col.badgeClass} ring-2 ring-slate-900 border-transparent shadow-sm`
-                                            : "bg-slate-50 border-slate-200 text-slate-400 opacity-60 hover:opacity-100"
-                                        }`}
-                                >
-                                    <span className={`w-3 h-3 rounded-full ${col.bgClass}`} />
-                                    <span>Color {id}</span>
-                                </button>
-                            )
-                        })}
-                    </div>
-                </div>
-
-                {/* CÓDIGO DE PULSERA / ESCÁNER */}
-                <div>
-                    <label className="text-xs font-bold text-slate-500 mb-1 block">Código / Pulsera Física (Escanear) *</label>
-                    <input
-                        type="text"
-                        placeholder="Ej. PK-099"
-                        value={wristbandCode}
-                        onChange={(e) => setWristbandCode(e.target.value)}
-                        className="w-full bg-slate-50 border border-pokido-cyan/50 rounded-2xl px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-pokido-cyan font-bold text-pokido-cyan uppercase"
-                    />
-                </div>
             </div>
 
-            {/* NOTAS MÉDICAS */}
-            {setMedicalNotes && (
-                <div>
-                    <label className="text-xs font-bold text-slate-500 mb-1 block">Notas Médicas / Observaciones (Opcional)</label>
-                    <input
-                        type="text"
-                        placeholder="Ej. Alergia al maní, usa lentes, etc."
-                        value={medicalNotes}
-                        onChange={(e) => setMedicalNotes(e.target.value)}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-4 py-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-pokido-purple font-medium text-slate-800"
-                    />
+            {/* LISTA DINÁMICA DE NIÑOS */}
+            <div className="space-y-4">
+                <div className="flex justify-between items-center">
+                    <label className="text-xs font-black text-slate-700 uppercase tracking-wider">
+                        Datos de los Niños ({minorsList.length})
+                    </label>
+                    <button
+                        type="button"
+                        onClick={handleAddChildRow}
+                        className="text-xs font-bold text-pokido-purple hover:text-pokido-purple/80 bg-pokido-purple/10 px-3 py-1.5 rounded-xl transition cursor-pointer flex items-center gap-1"
+                    >
+                        <span>➕</span> Agregar Otro Niño
+                    </button>
                 </div>
-            )}
+
+                {minorsList.map((child, index) => (
+                    <div key={child.id} className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-3 relative">
+                        <div className="flex items-center justify-between">
+                            <span className="text-xs font-extrabold text-slate-400">Niño #{index + 1}</span>
+                            {minorsList.length > 1 && (
+                                <button
+                                    type="button"
+                                    onClick={() => handleRemoveChildRow(child.id)}
+                                    className="text-xs font-bold text-red-500 hover:text-red-700 cursor-pointer"
+                                >
+                                    ✕ Quitar
+                                </button>
+                            )}
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                            <div className="sm:col-span-2">
+                                <input
+                                    type="text"
+                                    placeholder="Nombre del Niño/a *"
+                                    value={child.fullName}
+                                    onChange={(e) => handleUpdateChildField(child.id, "fullName", e.target.value)}
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-pokido-purple"
+                                />
+                            </div>
+
+                            <div>
+                                <input
+                                    type="number"
+                                    placeholder="Edad (Años)"
+                                    value={child.age}
+                                    onChange={(e) => handleUpdateChildField(child.id, "age", e.target.value)}
+                                    className="w-full bg-white border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-pokido-purple"
+                                />
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            <input
+                                type="text"
+                                placeholder="Código Pulsera (Opcional)"
+                                value={child.wristbandCode}
+                                onChange={(e) => handleUpdateChildField(child.id, "wristbandCode", e.target.value.toUpperCase())}
+                                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:ring-2 focus:ring-pokido-purple"
+                            />
+
+                            <input
+                                type="text"
+                                placeholder="Observaciones / Notas Médicas"
+                                value={child.medicalNotes}
+                                onChange={(e) => handleUpdateChildField(child.id, "medicalNotes", e.target.value)}
+                                className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-pokido-purple"
+                            />
+                        </div>
+                    </div>
+                ))}
+            </div>
 
             <button
                 type="button"
-                disabled={!isFormValid}
-                onClick={onAddMinorToCart}
+                disabled={!hasValidMinors}
+                onClick={handleSubmitAllToCart}
                 className="w-full bg-pokido-cyan hover:bg-pokido-cyan/90 disabled:opacity-40 disabled:cursor-not-allowed text-white font-bold py-3.5 rounded-2xl transition shadow-lg shadow-pokido-cyan/20 text-sm flex items-center justify-center gap-2 cursor-pointer"
             >
-                <span>➕</span> Agregar Niño al Carrito
+                <span>🛒</span> Agregar ({minorsList.filter(m => m.fullName.trim() !== "").length}) Niño(s) al Carrito
             </button>
         </div>
     )

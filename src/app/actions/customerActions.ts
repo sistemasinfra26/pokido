@@ -7,12 +7,24 @@ function cleanDniString(val: string): string {
     return val.replace(/[^0-9kK]/g, "").trim()
 }
 
-// 1. Obtener la lista completa de clientes con sus menores y estado de waiver
+// 1. Obtener la lista completa de clientes con sus menores, estado de waiver Y TICKETS ACTIVOS
 export async function getCustomersList() {
     try {
         const customers = await prisma.customer.findMany({
             include: {
-                minors: true,
+                minors: {
+                    include: {
+                        tickets: {
+                            where: {
+                                status: "ACTIVE",
+                            },
+                            orderBy: {
+                                createdAt: "desc",
+                            },
+                            take: 1,
+                        },
+                    },
+                },
                 waivers: {
                     orderBy: { signedAt: "desc" },
                     take: 1,
@@ -49,10 +61,22 @@ export async function getCustomersList() {
                 const currentYear = now.getFullYear()
                 const age = currentYear - birthYear
 
+                const activeTicket = m.tickets[0]
+
                 return {
                     id: m.id,
                     fullName: m.fullName,
                     age: age > 0 ? age : 0,
+                    qrCode: activeTicket?.qrCode || undefined,
+                    activeTicket: activeTicket
+                        ? {
+                            id: activeTicket.id,
+                            qrCode: activeTicket.qrCode,
+                            price: Number(activeTicket.price), // 🔑 Decimal a Number
+                            startTime: activeTicket.startTime?.toISOString() ?? null,
+                            endTime: activeTicket.endTime?.toISOString() ?? null,
+                        }
+                        : null,
                 }
             })
 
@@ -75,27 +99,37 @@ export async function getCustomersList() {
     }
 }
 
-// 2. Buscar cliente por DNI (Usado en el POS)
+// 2. Buscar cliente por DNI/Nombre y devolver TODOS sus menores a cargo (Sin objetos Decimal)
 export async function findCustomerByDni(dniQuery: string) {
     try {
         const rawQuery = dniQuery.trim()
         const cleanDni = cleanDniString(rawQuery)
 
         if (!rawQuery && !cleanDni) {
-            return { success: false, error: "DNI inválido" }
+            return { success: false, customer: null, error: "Consulta de búsqueda vacía" }
         }
 
-        // Busca coincidencia exacta por DNI limpio O por el texto ingresado con puntos
         const customer = await prisma.customer.findFirst({
             where: {
                 OR: [
                     { dni: { equals: cleanDni, mode: "insensitive" } },
                     { dni: { equals: rawQuery, mode: "insensitive" } },
-                    { dni: { contains: cleanDni, mode: "insensitive" } },
+                    { fullName: { contains: rawQuery, mode: "insensitive" } },
                 ],
             },
             include: {
-                minors: true,
+                minors: {
+                    include: {
+                        tickets: {
+                            where: { status: "ACTIVE" },
+                            orderBy: { createdAt: "desc" },
+                            take: 1,
+                        },
+                    },
+                    orderBy: {
+                        fullName: "asc",
+                    },
+                },
                 waivers: {
                     orderBy: { signedAt: "desc" },
                     take: 1,
@@ -104,15 +138,40 @@ export async function findCustomerByDni(dniQuery: string) {
         })
 
         if (!customer) {
-            return { success: false, error: "Cliente no encontrado" }
+            return { success: false, customer: null, error: "Cliente no encontrado" }
         }
 
-        // Verificar si tiene un deslinde válido y no vencido
         const now = new Date()
         const latestWaiver = customer.waivers[0]
         const hasValidWaiver = Boolean(
             latestWaiver && latestWaiver.isValid && new Date(latestWaiver.expiresAt) > now
         )
+
+        // 🔑 SANITIZADO ESTRICTO: Reconstrucción manual sin spreading genérico (...m)
+        const formattedMinors = customer.minors.map((m) => {
+            const birthYear = new Date(m.birthDate).getFullYear()
+            const age = now.getFullYear() - birthYear
+            const activeTicket = m.tickets[0]
+
+            return {
+                id: m.id,
+                fullName: m.fullName,
+                age: age > 0 ? age : 0,
+                birthDate: m.birthDate ? m.birthDate.toISOString() : null,
+                qrCode: activeTicket?.qrCode || undefined,
+                activeTicket: activeTicket
+                    ? {
+                        id: activeTicket.id,
+                        qrCode: activeTicket.qrCode,
+                        price: Number(activeTicket.price),
+                        // 🔑 FIX: Agregamos verificación segura para fechas nulas
+                        startTime: activeTicket.startTime ? activeTicket.startTime.toISOString() : null,
+                        endTime: activeTicket.endTime ? activeTicket.endTime.toISOString() : null,
+                        status: activeTicket.status,
+                    }
+                    : null,
+            }
+        })
 
         return {
             success: true,
@@ -120,14 +179,15 @@ export async function findCustomerByDni(dniQuery: string) {
                 id: customer.id,
                 name: customer.fullName,
                 dni: customer.dni,
-                phone: customer.phone,
-                email: customer.email,
+                phone: customer.phone || "",
+                email: customer.email || "",
                 hasWaiver: hasValidWaiver,
-                minors: customer.minors,
+                minors: formattedMinors, // 👈 Soporta múltiples menores sin Decimal
             },
         }
     } catch (error: any) {
-        return { success: false, error: error.message }
+        console.error("Error en findCustomerByDni:", error)
+        return { success: false, customer: null, error: error.message }
     }
 }
 
@@ -142,12 +202,16 @@ export interface QuickCustomerInput {
 export async function createQuickCustomer(data: QuickCustomerInput) {
     try {
         const cleanDni = cleanDniString(data.dni)
+        const finalDni = cleanDni || data.dni.trim()
 
-        // Verificar si existe el cliente buscando por ambas variantes de DNI
+        if (!finalDni) {
+            return { success: false, error: "El DNI ingresado no es válido." }
+        }
+
         const existing = await prisma.customer.findFirst({
             where: {
                 OR: [
-                    { dni: cleanDni },
+                    { dni: finalDni },
                     { dni: data.dni.trim() },
                 ],
             },
@@ -160,9 +224,9 @@ export async function createQuickCustomer(data: QuickCustomerInput) {
         const newCustomer = await prisma.customer.create({
             data: {
                 fullName: data.fullName,
-                dni: cleanDni || data.dni.trim(), // Guarda siempre la versión limpia del DNI
+                dni: finalDni,
                 phone: data.phone,
-                email: data.email || `${cleanDni || "cliente"}@pokido.temp`,
+                email: data.email || `${finalDni}@pokido.temp`,
             },
         })
 
@@ -175,9 +239,94 @@ export async function createQuickCustomer(data: QuickCustomerInput) {
                 phone: newCustomer.phone,
                 email: newCustomer.email,
                 hasWaiver: false,
+                minors: [],
             },
         }
     } catch (error: any) {
+        console.error("Error al crear cliente rápido:", error)
         return { success: false, error: error.message }
+    }
+}
+
+// 4. NUEVA ACTION: Adjuntar un nuevo menor a un tutor existente
+export async function addMinorToCustomer(customerId: string, minorData: { fullName: string; age: number }) {
+    try {
+        if (!customerId) {
+            return { success: false, error: "ID de tutor invalido." }
+        }
+
+        if (!minorData.fullName.trim()) {
+            return { success: false, error: "El nombre del menor es obligatorio." }
+        }
+
+        const birthDate = new Date()
+        birthDate.setFullYear(birthDate.getFullYear() - (minorData.age || 0))
+
+        const newMinor = await prisma.minor.create({
+            data: {
+                customerId,
+                fullName: minorData.fullName.trim(),
+                birthDate,
+            },
+        })
+
+        return {
+            success: true,
+            minor: {
+                id: newMinor.id,
+                fullName: newMinor.fullName,
+                age: minorData.age || 0,
+                birthDate: newMinor.birthDate.toISOString(),
+                qrCode: undefined,
+                activeTicket: null,
+            },
+        }
+    } catch (error: any) {
+        console.error("Error al agregar menor al cliente:", error)
+        return { success: false, error: error.message }
+    }
+}
+
+// 5. NUEVA ACTION: Consultar todos los menores de un tutor específico
+export async function getMinorsByCustomerId(customerId: string) {
+    try {
+        const minors = await prisma.minor.findMany({
+            where: { customerId },
+            include: {
+                tickets: {
+                    where: { status: "ACTIVE" },
+                    orderBy: { createdAt: "desc" },
+                    take: 1,
+                },
+            },
+            orderBy: { fullName: "asc" },
+        })
+
+        const now = new Date()
+        const formattedMinors = minors.map((m) => {
+            const birthYear = new Date(m.birthDate).getFullYear()
+            const age = now.getFullYear() - birthYear
+            const activeTicket = m.tickets[0]
+
+            return {
+                id: m.id,
+                fullName: m.fullName,
+                age: age > 0 ? age : 0,
+                qrCode: activeTicket?.qrCode || undefined,
+                activeTicket: activeTicket
+                    ? {
+                        id: activeTicket.id,
+                        qrCode: activeTicket.qrCode,
+                        price: Number(activeTicket.price),
+                        startTime: activeTicket.startTime?.toISOString() ?? null,
+                        endTime: activeTicket.endTime?.toISOString() ?? null,
+                    }
+                    : null,
+            }
+        })
+
+        return { success: true, minors: formattedMinors }
+    } catch (error: any) {
+        return { success: false, error: error.message, minors: [] }
     }
 }

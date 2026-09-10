@@ -6,7 +6,7 @@ export function Footer() {
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-4 gap-8 mb-12">
                 <div>
                     <div className="flex items-center gap-2 mb-4">
-                        <span className="text-2xl font-black tracking-wider text-pokido-purple">POKIDO</span>
+                        <span className="text-2xl font-black tracking-wider text-pokido-purple">POKIDDO</span>
                         <span className="text-xs bg-pokido-purple/10 text-pokido-purple px-2 py-0.5 rounded-full font-bold uppercase border border-pokido-purple/20">Park</span>
                     </div>
                     <p className="text-xs text-slate-500">

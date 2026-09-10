@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react"
 
-// Interfaz inline para evitar problemas de módulos / rutas
 export interface ActiveChild {
     id: string
     wristbandCode: string
@@ -23,10 +22,12 @@ export interface ActiveChild {
 }
 
 interface KpisData {
+    aforoActual?: number
     aforoMax?: number
     ventasHoy: string
     pedidosTotal: number
     cumpleanosHoy: number
+    alertasTiempo?: number
 }
 
 interface KpiCardsProps {
@@ -37,7 +38,6 @@ interface KpiCardsProps {
 export function KpiCards({ kpis, childrenList = [] }: KpiCardsProps) {
     const [, setTick] = useState(0)
 
-    // Forzar re-render cada 10 segundos para actualizar tiempos en vivo
     useEffect(() => {
         const interval = setInterval(() => {
             setTick((prev) => prev + 1)
@@ -47,28 +47,43 @@ export function KpiCards({ kpis, childrenList = [] }: KpiCardsProps) {
 
     const now = new Date()
 
-    // Clasificación dinámica basada en las fechas del turno
-    let activeInPark = 0
+    let activeInParkFromList = 0
     let waitingToStart = 0
-    let expiredCount = 0
+    let expiredCountFromList = 0
 
-    childrenList.forEach((child) => {
-        const start = new Date(child.rawStartTime)
-        const end = new Date(child.rawEndTime)
+    const hasChildrenList = Array.isArray(childrenList) && childrenList.length > 0
 
-        const msUntilStart = start.getTime() - now.getTime()
-        const msUntilEnd = end.getTime() - now.getTime()
+    if (hasChildrenList) {
+        childrenList.forEach((child) => {
+            const start = new Date(child.rawStartTime)
+            const end = new Date(child.rawEndTime)
 
-        const isWaiting = msUntilStart > 0
-        const isExpired = msUntilEnd < 0
-        const isPlaying = !isWaiting && !isExpired
+            const msUntilStart = start.getTime() - now.getTime()
+            const msUntilEnd = end.getTime() - now.getTime()
 
-        if (isPlaying) activeInPark++
-        if (isWaiting) waitingToStart++
-        if (isExpired) expiredCount++
-    })
+            const isWaiting = msUntilStart > 0
+            const isExpired = msUntilEnd < 0
+            const isPlaying = !isWaiting && !isExpired
 
-    const safeMax = kpis.aforoMax || 90
+            if (isPlaying) activeInParkFromList++
+            if (isWaiting) waitingToStart++
+            if (isExpired) {
+                expiredCountFromList++
+                activeInParkFromList++ // Los niños excedidos siguen físicamente en pista
+            }
+        })
+    }
+
+    // EVALUACIÓN DE AFORO REAL: Si viene childrenList calculamos localmente, de lo contrario usamos kpis.aforoActual
+    const activeInPark = hasChildrenList
+        ? activeInParkFromList
+        : Number(kpis.aforoActual || 0)
+
+    const displayExpired = hasChildrenList
+        ? expiredCountFromList
+        : Number(kpis.alertasTiempo || 0)
+
+    const safeMax = kpis.aforoMax || 100
     const percentage = Math.min(100, Math.round((activeInPark / safeMax) * 100))
 
     return (
@@ -85,10 +100,10 @@ export function KpiCards({ kpis, childrenList = [] }: KpiCardsProps) {
                 <div className="w-full bg-slate-100 h-2 rounded-full mt-3 overflow-hidden border border-slate-200/50">
                     <div
                         className={`h-full rounded-full transition-all duration-500 ${percentage >= 90
-                                ? "bg-pokido-red"
-                                : percentage >= 75
-                                    ? "bg-pokido-orange"
-                                    : "bg-pokido-green"
+                            ? "bg-pokido-red"
+                            : percentage >= 75
+                                ? "bg-pokido-orange"
+                                : "bg-pokido-green"
                             }`}
                         style={{ width: `${percentage}%` }}
                     />
@@ -132,10 +147,10 @@ export function KpiCards({ kpis, childrenList = [] }: KpiCardsProps) {
                     Tiempos Excedidos
                 </span>
                 <div className="text-3xl font-black text-pokido-red mt-1">
-                    {expiredCount} Niños
+                    {displayExpired} Niños
                 </div>
                 <span className="text-xs text-pokido-red font-semibold mt-2 block">
-                    {expiredCount > 0 ? "⚠️ Requieren cobro de recargo" : "✓ Todo en orden"}
+                    {displayExpired > 0 ? "⚠️ Requieren cobro de recargo" : "✓ Todo en orden"}
                 </span>
             </div>
         </div>

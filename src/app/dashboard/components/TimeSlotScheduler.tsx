@@ -8,7 +8,6 @@ export interface TimeSlotRow {
     timeStr: string
     color30Min: number
     color60Min: number
-    color90Min: number
     expiringColor: number
     bookedCount?: number
     capacity?: number
@@ -33,7 +32,7 @@ interface TimeSlotSchedulerProps {
 export function TimeSlotScheduler({
     onSelectSlot,
     isInteractive = true,
-    capacityPerSlot = PARK_TOTAL_MAX_CAPACITY, // ✅ Ahora usa por defecto el aforo total del parque (90)
+    capacityPerSlot = PARK_TOTAL_MAX_CAPACITY,
     occupancyData = {},
 }: TimeSlotSchedulerProps) {
     const router = useRouter()
@@ -84,7 +83,6 @@ export function TimeSlotScheduler({
                             <th className="py-3 px-4 min-w-[180px]">Capacidad / Ocupación</th>
                             <th className="py-3 px-4 text-center">Pase 30 Min</th>
                             <th className="py-3 px-4 text-center">Pase 1 Hora</th>
-                            <th className="py-3 px-4 text-center">Pase 90 Min</th>
                             <th className="py-3 px-4 text-center">🔴 Salida del Parque</th>
                         </tr>
                     </thead>
@@ -92,10 +90,8 @@ export function TimeSlotScheduler({
                         {timeSlotsList.map((timeStr) => {
                             const c30 = getWristbandColorForTime(timeStr, 30)
                             const c60 = getWristbandColorForTime(timeStr, 60)
-                            const c90 = getWristbandColorForTime(timeStr, 90)
 
-                            // Búsqueda flexible en el diccionario de ocupación
-                            const shortKey = timeStr.slice(0, 5) // "17:00"
+                            const shortKey = timeStr.slice(0, 5)
                             const booked = occupancyData[shortKey] || occupancyData[timeStr] || 0
 
                             const percentage = Math.min(100, Math.round((booked / capacityPerSlot) * 100))
@@ -133,10 +129,10 @@ export function TimeSlotScheduler({
                                             <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden border border-slate-200/80">
                                                 <div
                                                     className={`h-full rounded-full transition-all duration-500 ${isFull
-                                                            ? "bg-pokido-red"
-                                                            : percentage > 80
-                                                                ? "bg-pokido-orange"
-                                                                : "bg-pokido-green"
+                                                        ? "bg-pokido-red"
+                                                        : percentage > 80
+                                                            ? "bg-pokido-orange"
+                                                            : "bg-pokido-green"
                                                         }`}
                                                     style={{ width: `${percentage}%` }}
                                                 />
@@ -173,22 +169,6 @@ export function TimeSlotScheduler({
                                                 }`}
                                         >
                                             <span className={`w-3.5 h-3.5 rounded-full ${c60.bgClass} border border-black/10 shadow-sm`} />
-                                        </button>
-                                    </td>
-
-                                    {/* PASE 90 MIN */}
-                                    <td className="py-2 px-3 text-center">
-                                        <button
-                                            type="button"
-                                            disabled={isFull}
-                                            onClick={() => handleSlotClick(timeStr, 90, c90.id)}
-                                            className={`w-full py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-2 border transition ${c90.badgeClass
-                                                } ${!isFull
-                                                    ? "hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
-                                                    : "opacity-40 cursor-not-allowed"
-                                                }`}
-                                        >
-                                            <span className={`w-3.5 h-3.5 rounded-full ${c90.bgClass} border border-black/10 shadow-sm`} />
                                         </button>
                                     </td>
 

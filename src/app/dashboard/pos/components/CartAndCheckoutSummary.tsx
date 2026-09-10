@@ -20,7 +20,7 @@ interface CartAndCheckoutSummaryProps {
     paymentMethod: PaymentMethod
     setPaymentMethod: (method: PaymentMethod) => void
     totalAmount: number
-    onSuccessSale: () => void
+    onSuccessSale: (saleResponse?: any) => void // 👈 Permite recibir la respuesta del backend
 }
 
 export function CartAndCheckoutSummary({
@@ -33,6 +33,10 @@ export function CartAndCheckoutSummary({
 }: CartAndCheckoutSummaryProps) {
     const [loading, setLoading] = useState(false)
     const [errorMsg, setErrorMsg] = useState("")
+
+    // CALCULO DIRECTO GARANTIZADO: Suma estricta de cada item en el carrito
+    const calculatedTotal = selectedMinors.reduce((acc, curr) => acc + (Number(curr.price) || 0), 0)
+    const finalDisplayTotal = calculatedTotal > 0 ? calculatedTotal : totalAmount
 
     const handleCheckout = async () => {
         if (!selectedCustomer) {
@@ -51,16 +55,17 @@ export function CartAndCheckoutSummary({
         try {
             const payload = {
                 customerId: selectedCustomer.id,
-                staffProfileId: "STAFF-DEMO-01", // Cambiar por ID de sesión activa en Supabase/Auth
+                staffProfileId: "STAFF-DEMO-01",
                 paymentMethod,
                 items: selectedMinors,
+                totalAmount: finalDisplayTotal,
             }
 
             const res = await processPosSale(payload)
 
             if (res.success) {
-                alert(`¡Pago Procesado con éxito! Orden: ${res.orderNumber}`)
-                onSuccessSale()
+                // 🔑 Pasamos el objeto completo devuelto por el servidor para abrir el Recibo
+                onSuccessSale(res)
             } else {
                 setErrorMsg(res.error || "Error al completar la transacción.")
             }
@@ -79,8 +84,8 @@ export function CartAndCheckoutSummary({
                 </h2>
 
                 {selectedMinors.length === 0 ? (
-                    <div className="text-center py-10 text-slate-400 text-xs">
-                        No hay pases agregados aún
+                    <div className="text-center py-10 text-slate-400 text-xs font-medium">
+                        No hay pases ni recargos agregados aún
                     </div>
                 ) : (
                     <div className="space-y-3">
@@ -91,14 +96,17 @@ export function CartAndCheckoutSummary({
                                         {item.minorName || "Niño sin nombre"} {item.minorAge ? `(${item.minorAge} años)` : ""}
                                     </div>
                                     <div className="text-slate-500 font-medium">
-                                        Pase {item.durationMinutes || 60} min
+                                        {item.ticketTypeId === "OVERTIME-PENALTY"
+                                            ? "Penalización por Exceso de Tiempo"
+                                            : `Pase ${item.durationMinutes || 60} min`
+                                        }
                                     </div>
                                     <div className="text-pokido-cyan font-mono font-bold mt-0.5">
                                         Pulsera: {item.wristbandCode}
                                     </div>
                                 </div>
                                 <div className="font-black text-slate-900 text-sm">
-                                    ${item.price.toLocaleString()}
+                                    $ {Number(item.price).toLocaleString("es-CL")}
                                 </div>
                             </div>
                         ))}
@@ -135,7 +143,7 @@ export function CartAndCheckoutSummary({
                 <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center justify-between">
                     <span className="text-xs font-bold text-slate-500 uppercase">TOTAL A COBRAR:</span>
                     <span className="text-2xl font-black text-pokido-green">
-                        ${totalAmount.toLocaleString()}
+                        $ {finalDisplayTotal.toLocaleString("es-CL")}
                     </span>
                 </div>
 
