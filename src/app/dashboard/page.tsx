@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react"
 import { getDashboardData } from "@/app/actions/dashboardActions"
 import { DashboardHeader } from "./components/DashboardHeader"
-import { KpiCards } from "./components/KpiCards"
+import { KpiCards, ActiveChild } from "./components/KpiCards"
 import { RealtimeAlerts, AlertItem } from "./components/RealtimeAlerts"
 import { TodayBookingsSummary, PartyRoomItem } from "./components/TodayBookingsSummary"
 import { TimeSlotScheduler } from "./components/TimeSlotScheduler"
@@ -20,6 +20,7 @@ export default function DashboardSummaryPage() {
         alertasTiempo: 0,
     })
 
+    const [activeChildren, setActiveChildren] = useState<ActiveChild[]>([])
     const [alertItems, setAlertItems] = useState<AlertItem[]>([])
     const [partyRooms, setPartyRooms] = useState<PartyRoomItem[]>([])
     const [occupancyData, setOccupancyData] = useState<Record<string, number>>({})
@@ -32,25 +33,28 @@ export default function DashboardSummaryPage() {
         if (res.success && res.data) {
             const rawData = res.data as any
 
+            // Fallback en cascada para garantizar la lectura del aforo real
+            const realAforo =
+                rawData.kpis?.aforoActual ??
+                rawData.kpis?.activeCount ??
+                rawData.activeChildren?.length ??
+                0
+
             setKpis({
                 ...rawData.kpis,
+                aforoActual: Number(realAforo),
                 aforoMax: rawData.kpis?.aforoMax || PARK_TOTAL_MAX_CAPACITY,
             })
+
+            if (rawData.activeChildren) {
+                setActiveChildren(rawData.activeChildren)
+            }
+
             setAlertItems(rawData.alertItems || [])
             setPartyRooms(rawData.partyRooms || [])
 
-            // Cargar ocupación si viene del servidor o procesar el listado de niños
             if (rawData.occupancyData) {
                 setOccupancyData(rawData.occupancyData)
-            } else if (rawData.childrenList) {
-                const map: Record<string, number> = {}
-                rawData.childrenList.forEach((child: any) => {
-                    const timeKey = child.slotStartTime || child.purchaseTime?.slice(0, 5)
-                    if (timeKey) {
-                        map[timeKey] = (map[timeKey] || 0) + 1
-                    }
-                })
-                setOccupancyData(map)
             }
         }
     }
@@ -71,12 +75,12 @@ export default function DashboardSummaryPage() {
         <div className="p-6 bg-slate-100 min-h-screen text-slate-800 font-sans space-y-6">
             <DashboardHeader />
 
-            {/* TARJETAS DE MÉTRICAS */}
-            <KpiCards kpis={kpis} />
+            {/* TARJETAS DE MÉTRICAS CON LISTA Y DATOS SINCRONIZADOS */}
+            <KpiCards kpis={kpis} childrenList={activeChildren} />
 
-            {/* CRONOGRAMA DE TURNOS Y COLORES DE PULSERA */}
+            {/* CRONOGRAMA INTERACTIVO */}
             <TimeSlotScheduler
-                isInteractive={false}
+                isInteractive={true}
                 capacityPerSlot={kpis.aforoMax || PARK_TOTAL_MAX_CAPACITY}
                 occupancyData={occupancyData}
             />

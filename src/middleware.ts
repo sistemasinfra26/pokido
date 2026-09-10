@@ -1,19 +1,15 @@
-import { type NextRequest } from 'next/server'
-import { updateSession } from '@/lib/supabase/middleware'
+import { clerkMiddleware } from "@clerk/nextjs/server"
 
-export async function middleware(request: NextRequest) {
-  return await updateSession(request)
-}
+export default clerkMiddleware(async (auth, req) => {
+  // El middleware solo valida que la sesión exista si intenta entrar al Dashboard
+  if (req.nextUrl.pathname.startsWith("/dashboard")) {
+    await auth.protect()
+  }
+})
 
 export const config = {
   matcher: [
-    /*
-     * Coincidir con todas las rutas excepto:
-     * - _next/static (archivos estáticos)
-     * - _next/image (optimización de imágenes)
-     * - favicon.ico (icono del navegador)
-     * - Archivos con extensiones comunes (.svg, .png, .jpg, .jpeg, .gif, .webp)
-     */
     '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/(api|trpc)(.*)',
   ],
 }

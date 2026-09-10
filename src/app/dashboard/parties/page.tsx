@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { getPartyRoomsData, createPartyBooking } from "@/app/actions/partyActions"
+import { getDashboardData } from "@/app/actions/dashboardActions"
 import { PartyRoomsGrid, RoomWithBookings } from "./components/PartyRoomsGrid"
 import { PartyRoomShowcase } from "./components/PartyRoomShowCase"
 import { PartiesCalendar } from "./components/PartiesCalendar"
@@ -27,16 +28,28 @@ export default function PartiesPage() {
 
     const loadData = async () => {
         setLoading(true)
-        const res = await getPartyRoomsData()
+
+        // 🔑 CONSULTA PARALELA: Salones de cumpleaños + Datos de aforo en pista del Dashboard
+        const [partyRes, dashRes] = await Promise.all([
+            getPartyRoomsData(),
+            getDashboardData(),
+        ])
+
         setLoading(false)
 
-        if (res.success) {
-            if (res.rooms) setRooms(res.rooms as any)
+        if (partyRes.success && partyRes.rooms) {
+            setRooms(partyRes.rooms as any)
+        }
 
-            // "En Pista": Únicamente niños con pulsera activa/en parque DENTRO de su turno horario actual
-            if (typeof res.activeChildrenInPark === "number") {
-                setActiveInPark(res.activeChildrenInPark)
-            }
+        // 🔑 FIX: Obtenemos el conteo exacto de niños en pista usando getDashboardData
+        if (dashRes.success && dashRes.data) {
+            const realActive =
+                dashRes.data.kpis?.aforoActual ??
+                dashRes.data.activeChildren?.length ??
+                0
+            setActiveInPark(Number(realActive))
+        } else if (partyRes.success && typeof partyRes.activeChildrenInPark === "number") {
+            setActiveInPark(partyRes.activeChildrenInPark)
         }
     }
 
@@ -52,7 +65,7 @@ export default function PartiesPage() {
         return acc + room.bookings.reduce((bAcc, b) => bAcc + b.guestCount, 0)
     }, 0)
 
-    // CÁLCULO DE AFORO REAL LIBRE: 90 - (Cupos Retenidos por Cumple + Niños actualmente Jugando en Pista)
+    // CÁLCULO DE AFORO REAL LIBRE: Capacity - (Cupos Retenidos por Cumple + Niños actualmente Jugando en Pista)
     const availableGeneralCapacity = Math.max(
         0,
         PARK_TOTAL_MAX_CAPACITY - totalReservedToday - activeInPark
@@ -141,8 +154,8 @@ export default function PartiesPage() {
                     type="button"
                     onClick={() => setActiveTab("grid")}
                     className={`px-5 py-2.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-2 ${activeTab === "grid"
-                            ? "bg-white text-slate-900 shadow-sm"
-                            : "text-slate-500 hover:text-slate-800"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-500 hover:text-slate-800"
                         }`}
                 >
                     <span>📅</span> Ocupación y Reservas del Día
@@ -152,8 +165,8 @@ export default function PartiesPage() {
                     type="button"
                     onClick={() => setActiveTab("calendar")}
                     className={`px-5 py-2.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-2 ${activeTab === "calendar"
-                            ? "bg-white text-slate-900 shadow-sm"
-                            : "text-slate-500 hover:text-slate-800"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-500 hover:text-slate-800"
                         }`}
                 >
                     <span>🗓️</span> Cronograma Mensual
@@ -163,8 +176,8 @@ export default function PartiesPage() {
                     type="button"
                     onClick={() => setActiveTab("showcase")}
                     className={`px-5 py-2.5 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-2 ${activeTab === "showcase"
-                            ? "bg-white text-slate-900 shadow-sm"
-                            : "text-slate-500 hover:text-slate-800"
+                        ? "bg-white text-slate-900 shadow-sm"
+                        : "text-slate-500 hover:text-slate-800"
                         }`}
                 >
                     <span>🎪</span> Catálogo de Salones
@@ -188,7 +201,7 @@ export default function PartiesPage() {
                 />
             )}
 
-            {/* MODAL DE REGISTRO REDISEÑADO */}
+            {/* MODAL DE REGISTRO */}
             {selectedRoomId && (
                 <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <form

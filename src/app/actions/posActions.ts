@@ -11,7 +11,7 @@ export interface CartItemInput {
     durationMinutes: number
     price: number
     wristbandCode: string
-    entryTime?: string // Recibe el horario oficial del turno reservado (ej. "19:30")
+    entryTime?: string
 }
 
 export interface CreatePosOrderInput {
@@ -30,14 +30,41 @@ export async function processPosSale(data: CreatePosOrderInput) {
             return { success: false, error: "El carrito no contiene productos." }
         }
 
-        // Calcular montos de la transacción
         const totalAmount = items.reduce((acc, curr) => acc + curr.price, 0)
         const orderNumber = `ORD-${Date.now().toString().slice(-6)}`
 
-        // Ejecutar la transacción completa
         const result = await prisma.$transaction(async (tx) => {
 
-            // 1. OBTENER O CREAR UN PROFILE (STAFF) VÁLIDO
+            // 1. VALIDAR O BUSCAR CLIENTE REAL EN BASE DE DATOS
+            let validCustomerId = customerId
+            let customerData = null
+
+            if (validCustomerId) {
+                customerData = await tx.customer.findUnique({
+                    where: { id: validCustomerId },
+                })
+                if (!customerData) validCustomerId = ""
+            }
+
+            if (!validCustomerId) {
+                customerData = await tx.customer.findFirst({
+                    where: { dni: "OVERTIME-DNI" },
+                })
+
+                if (!customerData) {
+                    customerData = await tx.customer.create({
+                        data: {
+                            fullName: "Cliente Regularización / Mostrador",
+                            dni: "OVERTIME-DNI",
+                            phone: "000000000",
+                            email: "recargos@pokidopark.com",
+                        },
+                    })
+                }
+                validCustomerId = customerData.id
+            }
+
+            // 2. OBTENER O CREAR STAFF VÁLIDO
             let validStaffId = staffProfileId
 
             if (validStaffId) {
@@ -52,7 +79,6 @@ export async function processPosSale(data: CreatePosOrderInput) {
                 if (firstProfile) {
                     validStaffId = firstProfile.id
                 } else {
-                    // Si no hay ningún perfil registrado en BD, creamos uno de caja por defecto
                     const defaultProfile = await tx.profile.create({
                         data: {
                             fullName: "Cajero Principal",
@@ -64,11 +90,11 @@ export async function processPosSale(data: CreatePosOrderInput) {
                 }
             }
 
-            // 2. CREAR LA ORDEN PRINCIPAL
+            // 3. CREAR LA ORDEN CON CLIENTE VÁLIDO
             const order = await tx.order.create({
                 data: {
                     orderNumber,
-                    customerId,
+                    customerId: validCustomerId,
                     staffId: validStaffId,
                     shiftId: cashShiftId,
                     subtotal: totalAmount,
@@ -77,10 +103,10 @@ export async function processPosSale(data: CreatePosOrderInput) {
                 },
             })
 
-            // 3. PROCESAR CADA NIÑO, PASE Y PULSERA ALINEADO AL TURNO
-            for (const item of items) {
+            const createdTickets = []
 
-                // A. Obtener o crear el tipo de pase (TicketType)
+            // 4. PROCESAR ÍTEMS
+            for (const item of items) {
                 let ticketType = await tx.ticketType.findFirst({
                     where: { durationMinutes: item.durationMinutes },
                 })
@@ -95,11 +121,10 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     })
                 }
 
-                // B. Buscar o registrar al menor (Minor)
                 let minor = await tx.minor.findFirst({
                     where: {
-                        customerId,
-                        fullName: item.minorName,
+                        customerId: validCustomerId,
+                        fullName: item.minorName.replace(" (RECARGO EXCESO DE TIEMPO)", "").trim(),
                     },
                 })
 
@@ -109,14 +134,13 @@ export async function processPosSale(data: CreatePosOrderInput) {
 
                     minor = await tx.minor.create({
                         data: {
-                            customerId,
+                            customerId: validCustomerId,
                             fullName: item.minorName,
                             birthDate,
                         },
                     })
                 }
 
-                // C. Crear el ítem de la orden (OrderItem)
                 await tx.orderItem.create({
                     data: {
                         orderId: order.id,
@@ -128,55 +152,103 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     },
                 })
 
-                // D. CALCULAR FECHA/HORA EXACTA DEL TURNO RESERVADO
                 const now = new Date()
                 let startTime = new Date()
 
-                // Si el ítem del carrito incluye la hora del turno reservado (ej. "19:30")
                 if (item.entryTime && item.entryTime.includes(":")) {
                     const [hours, minutes] = item.entryTime.split(":").map(Number)
                     startTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hours, minutes, 0, 0)
                 }
 
-                // El fin del turno se calcula sumando la duración exacta contratada a la hora del turno
                 const endTime = new Date(startTime.getTime() + item.durationMinutes * 60000)
-                const qrCode = `QR-${Date.now()}-${Math.floor(Math.random() * 1000)}`
 
-                // E. Generar el Ticket de tiempo alineado con el turno
+                const isOvertimePenalty = item.ticketTypeId === "OVERTIME-PENALTY"
+                const ticketQrCode = isOvertimePenalty
+                    ? `${item.wristbandCode}-REC-${Date.now().toString().slice(-4)}`
+                    : (item.wristbandCode && item.wristbandCode !== "RECARGO" && item.wristbandCode !== "REC-EXCESO"
+                        ? item.wristbandCode
+                        : `QR-${Date.now()}-${Math.floor(Math.random() * 1000)}`)
+
                 const ticket = await tx.ticket.create({
                     data: {
                         ticketTypeId: ticketType.id,
-                        customerId,
+                        customerId: validCustomerId,
                         minorId: minor.id,
                         orderId: order.id,
-                        qrCode,
+                        qrCode: ticketQrCode,
                         price: item.price,
                         validDate: startTime,
-                        startTime: startTime, // Guarda la hora oficial del turno (ej: 19:30)
-                        endTime: endTime,     // Guarda la hora oficial de salida (ej: 20:30)
-                        status: TicketStatus.ACTIVE,
+                        startTime,
+                        endTime,
+                        status: isOvertimePenalty ? TicketStatus.USED : TicketStatus.ACTIVE,
                     },
                 })
 
-                // F. Asignar o Vincular la Pulsera Física (Wristband)
-                await tx.wristband.upsert({
-                    where: { code: item.wristbandCode },
-                    update: {
-                        ticketId: ticket.id,
-                        status: WristbandStatus.IN_PARK,
-                        assignedAt: now,
-                    },
-                    create: {
-                        code: item.wristbandCode,
-                        color: "Estándar",
-                        ticketId: ticket.id,
-                        status: WristbandStatus.IN_PARK,
-                        assignedAt: now,
-                    },
+                // Si es un recargo, cerramos el ticket activo original
+                if (isOvertimePenalty) {
+                    const originalTicket = await tx.ticket.findFirst({
+                        where: {
+                            minorId: minor.id,
+                            status: TicketStatus.ACTIVE,
+                        },
+                    })
+
+                    if (originalTicket) {
+                        await tx.ticket.update({
+                            where: { id: originalTicket.id },
+                            data: { status: TicketStatus.USED },
+                        })
+                    }
+
+                    if (item.wristbandCode && item.wristbandCode !== "RECARGO") {
+                        const existingWristband = await tx.wristband.findUnique({
+                            where: { code: item.wristbandCode },
+                        })
+                        if (existingWristband) {
+                            await tx.wristband.update({
+                                where: { code: item.wristbandCode },
+                                data: {
+                                    status: WristbandStatus.AVAILABLE,
+                                    returnedAt: now,
+                                },
+                            })
+                        }
+                    }
+                }
+
+                // Si es compra normal, asociamos la pulsera
+                if (!isOvertimePenalty && item.wristbandCode && item.wristbandCode !== "RECARGO" && item.wristbandCode !== "REC-EXCESO") {
+                    await tx.wristband.upsert({
+                        where: { code: item.wristbandCode },
+                        update: {
+                            ticketId: ticket.id,
+                            status: WristbandStatus.IN_PARK,
+                            assignedAt: now,
+                        },
+                        create: {
+                            code: item.wristbandCode,
+                            color: "Estándar",
+                            ticketId: ticket.id,
+                            status: WristbandStatus.IN_PARK,
+                            assignedAt: now,
+                        },
+                    })
+                }
+
+                // 🔑 Guardamos los datos para estructurar el recibo post-venta (Sanitizando Decimales a Number)
+                createdTickets.push({
+                    id: ticket.id,
+                    qrCode: ticket.qrCode,
+                    price: Number(ticket.price),
+                    startTime: startTime.toISOString(),
+                    endTime: endTime.toISOString(),
+                    minorName: minor.fullName,
+                    durationMinutes: item.durationMinutes,
+                    wristbandCode: item.wristbandCode,
                 })
             }
 
-            // 4. REGISTRAR EL PAGO DE LA ORDEN
+            // 5. REGISTRAR PAGO
             await tx.payment.create({
                 data: {
                     orderId: order.id,
@@ -187,15 +259,129 @@ export async function processPosSale(data: CreatePosOrderInput) {
                 },
             })
 
-            return order
+            return {
+                orderId: order.id,
+                orderNumber: order.orderNumber,
+                total: Number(order.total),
+                createdAt: order.createdAt,
+                customerName: customerData?.fullName || "Cliente Mostrador",
+                customerDni: customerData?.dni || "S/D",
+                paymentMethod,
+                tickets: createdTickets,
+            }
         })
 
         revalidatePath("/dashboard/access")
         revalidatePath("/dashboard")
+        revalidatePath("/dashboard/history")
 
-        return { success: true, orderId: result.id, orderNumber: result.orderNumber }
+        return {
+            success: true,
+            receiptData: result,
+        }
     } catch (error: any) {
         console.error("Error al procesar venta POS:", error)
         return { success: false, error: error.message || "Error al procesar la venta." }
+    }
+}
+
+export async function getRecentOrders(limit: number = 10) {
+    try {
+        const orders = await prisma.order.findMany({
+            take: limit,
+            orderBy: { createdAt: "desc" },
+            include: {
+                customer: true,
+                payments: true,
+                tickets: {
+                    include: {
+                        minor: true,
+                        ticketType: true,
+                    },
+                },
+            },
+        })
+
+        const formattedOrders = orders.map((o) => ({
+            orderId: o.id,
+            orderNumber: o.orderNumber || `ORD-${o.id.slice(-4)}`,
+            total: Number(o.total),
+            paymentMethod: o.payments[0]?.method || "EFECTIVO",
+            createdAt: o.createdAt.toISOString(),
+            customerName: o.customer?.fullName || "Cliente Mostrador",
+            customerDni: o.customer?.dni || "S/D",
+            tickets: o.tickets.map((t) => ({
+                id: t.id,
+                qrCode: t.qrCode,
+                price: Number(t.price),
+                startTime: t.startTime ? t.startTime.toISOString() : new Date().toISOString(),
+                endTime: t.endTime ? t.endTime.toISOString() : new Date().toISOString(),
+                minorName: t.minor?.fullName || "Niño sin nombre",
+                durationMinutes: t.ticketType?.durationMinutes || 60,
+                wristbandCode: t.qrCode,
+            })),
+        }))
+
+        return { success: true, orders: formattedOrders }
+    } catch (error: any) {
+        console.error("Error al obtener ordenes recientes:", error)
+        return { success: false, orders: [], error: error.message }
+    }
+}
+
+export async function findTicketByWristbandCode(wristbandCode: string) {
+    try {
+        if (!wristbandCode) return { success: false, error: "Código de pulsera no ingresado" }
+
+        // Buscamos el ticket activo o consumido vinculado al código
+        const ticket = await prisma.ticket.findFirst({
+            where: {
+                OR: [
+                    { qrCode: { equals: wristbandCode, mode: "insensitive" } },
+                    { wristband: { code: { equals: wristbandCode, mode: "insensitive" } } },
+                ],
+            },
+            include: {
+                customer: true,
+                minor: true,
+                ticketType: true,
+            },
+            orderBy: { createdAt: "desc" },
+        })
+
+        if (!ticket) {
+            return { success: false, error: "No existe ninguna pulsera registrada con este código." }
+        }
+
+        const now = new Date()
+        const endTime = ticket.endTime ? new Date(ticket.endTime) : now
+
+        // Calculamos los minutos de exceso
+        const diffMs = now.getTime() - endTime.getTime()
+        const overtimeMinutes = Math.max(0, Math.ceil(diffMs / 60000))
+
+        // Regla de cálculo del recargo (ej: $2.000 cada 15 min o tarifa fija por exceso)
+        // Puedes adaptar esta tarifa según el tarifario del parque
+        const ratePer15Min = 2500
+        const periods = Math.max(1, Math.ceil(overtimeMinutes / 15))
+        const penaltyFee = overtimeMinutes > 0 ? periods * ratePer15Min : 3000 // Tarifa base mínima
+
+        return {
+            success: true,
+            ticket: {
+                ticketId: ticket.id,
+                customerId: ticket.customerId,
+                customerName: ticket.customer?.fullName || "Cliente Registrado",
+                customerDni: ticket.customer?.dni || "S/D",
+                minorId: ticket.minorId,
+                minorName: ticket.minor?.fullName || "Menor",
+                wristbandCode: ticket.qrCode,
+                overtimeMinutes: overtimeMinutes > 0 ? overtimeMinutes : 15,
+                penaltyFee,
+            },
+        }
+    } catch (error: any) {
+        console.error("Error al buscar ticket por pulsera:", error)
+        return { success: false, error: error.message }
     }
 }

@@ -61,3 +61,23 @@ export async function upsertTicketType(data: UpdateTicketTypeInput) {
         return { success: false, error: error.message }
     }
 }
+
+export async function deleteTicketType(id: string) {
+    try {
+        if (!id) return { success: false, error: "ID de tarifa no válido." }
+
+        // Opcion A: Desactivar suavemente (Recomendado para mantener historial de ventas)
+        await prisma.ticketType.update({
+            where: { id },
+            data: { isActive: false },
+        })
+
+        // Opción B (Si prefieres borrarla de la BD completamente):
+        // await prisma.ticketType.delete({ where: { id } })
+
+        return { success: true }
+    } catch (error: any) {
+        console.error("Error al eliminar la tarifa:", error)
+        return { success: false, error: error.message }
+    }
+}

@@ -10,6 +10,8 @@
     "db:migrate": "prisma migrate dev"
   },
   "dependencies": {
+    "@clerk/localizations": "^4.16.1",
+    "@clerk/nextjs": "^7.9.2",
     "@prisma/client": "^6.19.3",
     "@supabase/ssr": "^0.12.5",
     "@supabase/supabase-js": "^2.112.4",

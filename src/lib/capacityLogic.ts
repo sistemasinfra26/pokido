@@ -1,9 +1,9 @@
-export const PARK_TOTAL_MAX_CAPACITY = 90
+export const PARK_TOTAL_MAX_CAPACITY = 100 // 👈 Capacidad máxima actualizada a 100 chicos
 
 export interface SlotCapacityResult {
-    totalMaxCapacity: number       // 90
-    partyReservedCapacity: number   // Cupos retenidos por cumple
-    generalAvailableCapacity: number // 90 - partyReservedCapacity
+    totalMaxCapacity: number       // 100
+    partyReservedCapacity: number   // Cupos retenidos por cumpleaños
+    generalAvailableCapacity: number // 100 - partyReservedCapacity
     bookedGeneralCount: number
     remainingGeneralSpots: number
     isFull: boolean

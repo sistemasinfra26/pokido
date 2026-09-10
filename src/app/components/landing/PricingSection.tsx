@@ -1,78 +1,105 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import Link from "next/link"
+import { getTicketTypes } from "@/app/actions/ticketTypeActions"
+
+interface TicketTypeItem {
+    id: string
+    name: string
+    durationMinutes: number
+    price: number
+}
 
 export function PricingSection() {
-    const passes = [
-        {
-            name: "Pase 60 Minutos",
-            price: "$8.500",
-            description: "Ideal para una sesión rápida de energía.",
-            features: ["Acceso a todas las zonas", "Pulsera de tiempo activa", "Supervisión de monitores"],
-            highlight: false,
-        },
-        {
-            name: "Pase 120 Minutos",
-            price: "$14.000",
-            description: "La experiencia completa Pokido. El más vendido.",
-            features: ["Acceso total a atracciones", "Pulsera de tiempo extendida", "Descuento en Cafetería", "Acceso a Ninja Course"],
-            highlight: true,
-        },
-        {
-            name: "Calcetines Antideslizantes",
-            price: "$2.500",
-            description: "Uso obligatorio por seguridad (Reutilizables).",
-            features: ["Goma de agarre especial", "Lavables", "Te los llevas a casa"],
-            highlight: false,
-        },
-    ]
+    const [ticketTypes, setTicketTypes] = useState<TicketTypeItem[]>([])
+    const [loading, setLoading] = useState(true)
+
+    useEffect(() => {
+        async function loadTypes() {
+            const res = await getTicketTypes()
+            const typesArray = res.success ? (res.ticketTypes || (res as any).data) : null
+
+            if (typesArray) {
+                const formatted = typesArray.map((item: any) => ({
+                    id: item.id,
+                    name: item.name,
+                    durationMinutes: item.durationMinutes,
+                    price: Number(item.price),
+                }))
+                setTicketTypes(formatted)
+            }
+            setLoading(false)
+        }
+        loadTypes()
+    }, [])
+
+    const getColorByDuration = (duration: number) => {
+        if (duration <= 30) return "text-pokido-cyan bg-pokido-cyan/10 border-pokido-cyan/20"
+        if (duration <= 60) return "text-pokido-purple bg-pokido-purple/10 border-pokido-purple/20"
+        if (duration <= 90) return "text-pokido-orange bg-pokido-orange/10 border-pokido-orange/20"
+        return "text-pokido-red bg-pokido-red/10 border-pokido-red/20"
+    }
+
+    if (loading) {
+        return (
+            <section className="max-w-7xl mx-auto px-6 py-16 text-center">
+                <p className="text-xs font-bold text-slate-400 animate-pulse uppercase tracking-wider">
+                    Cargando tarifas oficiales...
+                </p>
+            </section>
+        )
+    }
 
     return (
-        <section id="precios" className="py-20">
-            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="text-center max-w-3xl mx-auto mb-16">
-                    <h2 className="text-3xl sm:text-4xl font-black text-white uppercase tracking-tight">
-                        Pases y <span className="text-pokido-purple">Entradas</span>
-                    </h2>
-                    <p className="text-slate-400 mt-4 text-lg">Selecciona la duración de tu pase. Recuerda ingresar con deslinde firmado.</p>
-                </div>
+        <section className="max-w-7xl mx-auto px-6 py-16 space-y-10">
+            <div className="text-center space-y-2">
+                <h2 className="text-3xl font-black text-slate-900">Tarifas de Pases</h2>
+                <p className="text-slate-500 text-xs font-medium">
+                    Elige el tiempo de diversión que prefieras para tu visita
+                </p>
+            </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-                    {passes.map((pass, index) => (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                {ticketTypes.map((item) => {
+                    const isPopular = item.durationMinutes === 60
+                    const colorBadgeClass = getColorByDuration(item.durationMinutes)
+
+                    return (
                         <div
-                            key={index}
-                            className={`rounded-3xl p-8 flex flex-col justify-between relative ${pass.highlight
-                                ? "bg-slate-900 border-2 border-pokido-orange shadow-2xl shadow-pokido-orange/10"
-                                : "bg-slate-950 border border-slate-800"
+                            key={item.id}
+                            className={`bg-white p-6 rounded-3xl border space-y-4 relative flex flex-col justify-between shadow-sm ${isPopular
+                                    ? "border-pokido-purple ring-2 ring-pokido-purple/20"
+                                    : "border-slate-200"
                                 }`}
                         >
-                            {pass.highlight && (
-                                <span className="absolute -top-4 left-1/2 -translate-x-1/2 bg-pokido-orange text-white text-xs font-black px-4 py-1 rounded-full uppercase tracking-wider">
-                                    Más Popular
+                            {isPopular && (
+                                <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-pokido-purple text-white text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-wider shadow-sm">
+                                    Más Elegido
                                 </span>
                             )}
-                            <div>
-                                <h3 className="text-2xl font-bold text-white mb-2">{pass.name}</h3>
-                                <p className="text-slate-400 text-sm mb-6">{pass.description}</p>
-                                <div className="text-4xl font-black text-white mb-6">{pass.price}</div>
-                                <ul className="space-y-3 mb-8">
-                                    {pass.features.map((feat, i) => (
-                                        <li key={i} className="text-slate-300 text-sm flex items-center gap-2">
-                                            <span className="text-pokido-green font-bold">✓</span> {feat}
-                                        </li>
-                                    ))}
-                                </ul>
+
+                            <div className="space-y-3">
+                                <span className={`inline-block text-[11px] font-black uppercase tracking-wider px-3 py-1 rounded-full border ${colorBadgeClass}`}>
+                                    {item.name}
+                                </span>
+                                <div className="text-3xl font-black text-slate-900">
+                                    ${item.price.toLocaleString("es-CL")}
+                                </div>
                             </div>
+
                             <Link
-                                href="#deslinde"
-                                className={`w-full text-center py-3.5 rounded-xl font-bold transition ${pass.highlight
-                                    ? "bg-pokido-orange text-white hover:bg-pokido-orange/90"
-                                    : "bg-slate-800 text-white hover:bg-slate-700"
+                                href={`/reserva?duration=${item.durationMinutes}`}
+                                className={`w-full py-3 rounded-2xl text-center font-black text-xs transition cursor-pointer ${isPopular
+                                        ? "bg-pokido-purple text-white hover:bg-pokido-purple/90 shadow-md shadow-pokido-purple/20"
+                                        : "bg-slate-100 hover:bg-slate-200 text-slate-700"
                                     }`}
                             >
-                                Comprar Pase
+                                Reservar Turno
                             </Link>
                         </div>
-                    ))}
-                </div>
+                    )
+                })}
             </div>
         </section>
     )

@@ -1,7 +1,7 @@
 "use client"
 
 import { useState } from "react"
-import { upsertTicketType } from "@/app/actions/ticketTypeActions"
+import { upsertTicketType, deleteTicketType } from "@/app/actions/ticketTypeActions"
 import { TicketType } from "../types"
 
 interface TicketSettingsTabProps {
@@ -47,6 +47,23 @@ export function TicketSettingsTab({ ticketTypes, onReload }: TicketSettingsTabPr
         }
     }
 
+    const handleDeleteTicket = async (id: string, name: string) => {
+        if (!confirm(`¿Estás seguro de que deseas eliminar la tarifa "${name}"?`)) {
+            return
+        }
+
+        const res = await deleteTicketType(id)
+        if (res.success) {
+            alert("Tarifa eliminada con éxito.")
+            if (editingTicketId === id) {
+                handleResetTicketForm()
+            }
+            onReload()
+        } else {
+            alert(res.error || "No se pudo eliminar la tarifa.")
+        }
+    }
+
     return (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 bg-white rounded-3xl border border-slate-200 p-6 shadow-sm space-y-4">
@@ -73,13 +90,23 @@ export function TicketSettingsTab({ ticketTypes, onReload }: TicketSettingsTabPr
                                     <td className="py-3.5 px-4 font-black text-pokido-purple text-sm">
                                         ${Number(item.price).toLocaleString("es-CL")}
                                     </td>
-                                    <td className="py-3.5 px-4 text-right">
+                                    <td className="py-3.5 px-4 text-right space-x-2">
                                         <button
                                             type="button"
                                             onClick={() => handleEditTicket(item)}
                                             className="bg-slate-900 hover:bg-slate-800 text-white font-bold px-3 py-1.5 rounded-xl transition cursor-pointer"
                                         >
                                             ✏️ Editar
+                                        </button>
+
+                                        {/* 🔑 BOTÓN DE ELIMINAR TARIFA */}
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDeleteTicket(item.id, item.name)}
+                                            className="bg-red-50 hover:bg-red-100 text-pokido-red border border-red-200 font-bold px-3 py-1.5 rounded-xl transition cursor-pointer"
+                                            title="Eliminar tarifa"
+                                        >
+                                            🗑️ Eliminar
                                         </button>
                                     </td>
                                 </tr>
@@ -103,7 +130,7 @@ export function TicketSettingsTab({ ticketTypes, onReload }: TicketSettingsTabPr
                             placeholder="Ej. Pase 60 Minutos"
                             value={ticketName}
                             onChange={(e) => setTicketName(e.target.value)}
-                            className="w-full bg-slate-50 border rounded-xl p-3 font-medium text-slate-800"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-medium text-slate-800 focus:outline-none focus:ring-2 focus:ring-pokido-purple"
                         />
                     </div>
 
@@ -116,7 +143,7 @@ export function TicketSettingsTab({ ticketTypes, onReload }: TicketSettingsTabPr
                             step={15}
                             value={durationMinutes}
                             onChange={(e) => setDurationMinutes(Number(e.target.value))}
-                            className="w-full bg-slate-50 border rounded-xl p-3 font-bold text-slate-800"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-pokido-purple"
                         />
                     </div>
 
@@ -128,7 +155,7 @@ export function TicketSettingsTab({ ticketTypes, onReload }: TicketSettingsTabPr
                             min={0}
                             value={ticketPrice}
                             onChange={(e) => setTicketPrice(Number(e.target.value))}
-                            className="w-full bg-slate-50 border rounded-xl p-3 font-black text-pokido-purple text-sm"
+                            className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 font-black text-pokido-purple text-sm focus:outline-none focus:ring-2 focus:ring-pokido-purple"
                         />
                     </div>
 

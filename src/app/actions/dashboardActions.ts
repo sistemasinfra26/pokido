@@ -1,7 +1,7 @@
 "use server"
 
 import { prisma } from "@/lib/prisma"
-import { TicketStatus, WristbandStatus } from "@prisma/client"
+import { TicketStatus } from "@prisma/client"
 import { PARK_TOTAL_MAX_CAPACITY } from "@/lib/capacityLogic"
 
 export async function getDashboardData() {
@@ -10,12 +10,60 @@ export async function getDashboardData() {
         const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0)
         const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59)
 
-        // 1. AFORO EN PARQUE (Pulseras o Tickets activos actualmente)
-        const aforoActual = await prisma.wristband.count({
-            where: { status: WristbandStatus.IN_PARK },
+        // 1. OBTENER TICKETS ACTIVOS DEL DÍA
+        const activeTickets = await prisma.ticket.findMany({
+            where: {
+                validDate: { gte: startOfDay, lte: endOfDay },
+                status: { in: [TicketStatus.ACTIVE, TicketStatus.IN_USE] },
+            },
+            include: {
+                minor: true,
+                customer: true,
+                ticketType: true,
+                wristband: true,
+            },
+            orderBy: { startTime: "asc" },
         })
 
-        // Capacidad Máxima Global (Aforo del parque: 90)
+        let aforoActual = 0
+        let enEspera = 0
+
+        // Mapeo detallado y discriminación de estado por horario
+        const activeChildren = activeTickets.map((t) => {
+            const start = t.startTime ? new Date(t.startTime) : now
+            const end = t.endTime ? new Date(t.endTime) : new Date(start.getTime() + (t.ticketType?.durationMinutes || 60) * 60000)
+
+            const isPlaying = start <= now && now <= end
+            const isWaiting = start > now
+            const isExpired = now > end
+
+            // 🔑 CONTADORES DE AFORO REAL
+            if (isPlaying || isExpired) {
+                aforoActual++ // Está jugando o está excedido -> Físicamente en pista
+            } else if (isWaiting) {
+                enEspera++ // Su turno es más tarde -> En Espera (NO descuenta aforo de pista actual)
+            }
+
+            return {
+                id: t.id,
+                wristbandCode: t.wristband?.code || t.qrCode || "S/A",
+                ticketId: t.id,
+                minorName: t.minor?.fullName || "Niño sin nombre",
+                age: 0,
+                tutorName: t.customer?.fullName || "Tutor Registrado",
+                tutorPhone: t.customer?.phone || "Sin teléfono",
+                purchaseTime: t.createdAt.toISOString(),
+                slotStartTime: `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`,
+                slotEndTime: `${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`,
+                slotWindow: `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")} - ${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}`,
+                contractedTime: `${t.ticketType?.durationMinutes || 60} min`,
+                durationMinutes: t.ticketType?.durationMinutes || 60,
+                rawStartTime: start.toISOString(),
+                rawEndTime: end.toISOString(),
+                status: isPlaying ? "PLAYING" : isWaiting ? "WAITING" : "EXPIRED",
+            }
+        })
+
         const aforoMax = PARK_TOTAL_MAX_CAPACITY
 
         // 2. VENTAS DEL DÍA
@@ -30,7 +78,7 @@ export async function getDashboardData() {
         const totalVentas = ordersToday.reduce((acc, curr) => acc + Number(curr.total), 0)
         const pedidosTotal = ordersToday.length
 
-        // 3. CUMPLEAÑOS DEL DÍA Y RESERVAS
+        // 3. CUMPLEAÑOS Y RESERVAS DEL DÍA
         const bookingsToday = await prisma.booking.findMany({
             where: {
                 date: { gte: startOfDay, lte: endOfDay },
@@ -38,55 +86,63 @@ export async function getDashboardData() {
             },
             select: {
                 startTime: true,
+                endTime: true,
                 guestCount: true,
             },
         })
 
         const cumpleanosHoyCount = bookingsToday.length
 
-        // 4. TICKETS VENDIDOS HOY (Para llenar las barritas de turnos desde la compra)
-        const ticketsToday = await prisma.ticket.findMany({
-            where: {
-                validDate: { gte: startOfDay, lte: endOfDay },
-                status: { in: [TicketStatus.ACTIVE, TicketStatus.IN_USE] },
-            },
-            select: {
-                startTime: true,
-            },
-        })
-
-        // 5. CONSTRUCCIÓN DEL MAPA DE OCUPACIÓN POR TURNO (occupancyData)
+        // 4. MAPA UNIFICADO DE OCUPACIÓN POR TURNO (occupancyData)
         const occupancyData: Record<string, number> = {}
 
-        // Sumar pases individuales vendidos por hora
-        ticketsToday.forEach((ticket) => {
+        activeTickets.forEach((ticket) => {
             if (ticket.startTime) {
-                const dateObj = new Date(ticket.startTime)
-                const hours = String(dateObj.getHours()).padStart(2, "0")
-                const minutes = String(dateObj.getMinutes()).padStart(2, "0")
-                const timeKey = `${hours}:${minutes}` // Ej: "17:00"
+                const start = new Date(ticket.startTime)
+                const hours = String(start.getHours()).padStart(2, "0")
+                const minutes = String(start.getMinutes()).padStart(2, "0")
+                const startKey = `${hours}:${minutes}`
 
-                occupancyData[timeKey] = (occupancyData[timeKey] || 0) + 1
+                occupancyData[startKey] = (occupancyData[startKey] || 0) + 1
+
+                const duration = ticket.ticketType?.durationMinutes || 60
+                if (duration >= 60) {
+                    const nextSlotDate = new Date(start.getTime() + 30 * 60000)
+                    const nextHours = String(nextSlotDate.getHours()).padStart(2, "0")
+                    const nextMinutes = String(nextSlotDate.getMinutes()).padStart(2, "0")
+                    const nextKey = `${nextHours}:${nextMinutes}`
+
+                    occupancyData[nextKey] = (occupancyData[nextKey] || 0) + 1
+                }
             }
         })
 
-        // Sumar cupos retenidos por salones de cumpleaños por hora
         bookingsToday.forEach((booking) => {
-            if (booking.startTime) {
-                const timeKey = booking.startTime.slice(0, 5) // Ej: "17:00"
-                occupancyData[timeKey] = (occupancyData[timeKey] || 0) + booking.guestCount
+            if (booking.startTime && booking.endTime) {
+                const [startH, startM] = booking.startTime.split(":").map(Number)
+                const [endH, endM] = booking.endTime.split(":").map(Number)
+
+                let currentMinutes = startH * 60 + startM
+                const endMinutes = endH * 60 + endM
+
+                while (currentMinutes < endMinutes) {
+                    const h = String(Math.floor(currentMinutes / 60)).padStart(2, "0")
+                    const m = String(currentMinutes % 60).padStart(2, "0")
+                    const timeKey = `${h}:${m}`
+
+                    occupancyData[timeKey] = (occupancyData[timeKey] || 0) + booking.guestCount
+                    currentMinutes += 30
+                }
             }
         })
 
-        // 6. NIÑOS EXCEDIDOS EN TIEMPO
-        const ticketsExcedidos = await prisma.ticket.count({
-            where: {
-                status: TicketStatus.ACTIVE,
-                endTime: { lt: now },
-            },
-        })
+        // 5. NIÑOS EXCEDIDOS EN TIEMPO
+        const ticketsExcedidos = activeTickets.filter((t) => {
+            if (!t.endTime) return false
+            return new Date(t.endTime) < now
+        }).length
 
-        // 7. ALERTAS EN VIVO (Stock Bajo + Tiempos Excedidos)
+        // 6. ALERTAS EN VIVO
         const alertItems = []
 
         if (ticketsExcedidos > 0) {
@@ -116,7 +172,7 @@ export async function getDashboardData() {
             })
         }
 
-        // 8. ESTADO DE SALONES DE CUMPLEAÑOS
+        // 7. ESTADO DE SALONES DE CUMPLEAÑOS
         const rooms = await prisma.partyRoom.findMany({
             where: { isActive: true },
             include: {
@@ -157,16 +213,18 @@ export async function getDashboardData() {
             success: true,
             data: {
                 kpis: {
-                    aforoActual,
+                    aforoActual, // 👈 Ahora sólo suma los que están en pista o excedidos
+                    enEspera,    // 👈 Niños con pases comprados para turnos más tarde
                     aforoMax,
                     ventasHoy: `$ ${totalVentas.toLocaleString("es-CL")}`,
                     pedidosTotal,
                     cumpleanosHoy: cumpleanosHoyCount,
                     alertasTiempo: ticketsExcedidos,
                 },
+                activeChildren,
                 alertItems,
                 partyRooms,
-                occupancyData, // Se retorna el mapeo directo para llenar las barritas de pases
+                occupancyData,
             },
         }
     } catch (error: any) {
