@@ -11,22 +11,77 @@ export function Sidebar() {
     const { signOut } = useClerk()
     const { user } = useUser()
 
-    const userRole = ((user?.publicMetadata as any)?.role || "cajera") as "admin" | "cajera" | "operador"
+    // 1. Obtener y normalizar el rol del usuario a mayúsculas
+    const rawRole = (user?.publicMetadata as any)?.role || "CASHIER"
+    const userRole = String(rawRole).toUpperCase()
 
-    // Definición de menú con permisos según rol
+    // 2. Mapeo de etiquetas legibles para la interfaz
+    const ROLE_DISPLAY_NAMES: Record<string, string> = {
+        ADMIN: "Administrador/a",
+        SUPERADMIN: "Super Admin",
+        MANAGER: "Gerente / Encargado/a",
+        CASHIER: "Cajero/a (POS)",
+        CAJERA: "Cajero/a (POS)",
+        STAFF: "Operario/a de Pista",
+        OPERADOR: "Operario/a de Pista",
+    }
+
+    // 3. Menú de navegación mapeado con los nuevos roles del sistema
     const navigation = [
-        { name: "Dashboard", href: "/dashboard", icon: "🎛️", roles: ["admin", "cajera", "operador"] },
-        { name: "Control de Accesos", href: "/dashboard/access", icon: "🎟️", roles: ["admin", "cajera", "operador"] },
-        { name: "Punto de Venta (POS)", href: "/dashboard/pos", icon: "💻", roles: ["admin", "cajera"] },
-        { name: "Historial y Auditoría", href: "/dashboard/history", icon: "📜", roles: ["admin"] },
-        { name: "Cumpleaños y Salones", href: "/dashboard/parties", icon: "🎂", roles: ["admin", "cajera"] },
-        { name: "Clientes y Waivers", href: "/dashboard/customers", icon: "📋", roles: ["admin", "cajera", "operador"] },
-        { name: "Gestión de Personal", href: "/dashboard/users", icon: "👥", roles: ["admin"] },
-        { name: "Configuración y Tarifas", href: "/dashboard/settings", icon: "⚙️", roles: ["admin"] },
+        {
+            name: "Dashboard",
+            href: "/dashboard",
+            icon: "🎛️",
+            roles: ["ADMIN", "SUPERADMIN", "MANAGER", "CASHIER", "STAFF", "admin", "cajera", "operador"]
+        },
+        {
+            name: "Control de Accesos",
+            href: "/dashboard/access",
+            icon: "🎟️",
+            roles: ["ADMIN", "SUPERADMIN", "MANAGER", "CASHIER", "STAFF", "admin", "cajera", "operador"]
+        },
+        {
+            name: "Punto de Venta (POS)",
+            href: "/dashboard/pos",
+            icon: "💻",
+            roles: ["ADMIN", "SUPERADMIN", "MANAGER", "CASHIER", "admin", "cajera"]
+        },
+        {
+            name: "Historial y Auditoría",
+            href: "/dashboard/history",
+            icon: "📜",
+            roles: ["ADMIN", "SUPERADMIN", "MANAGER", "admin"]
+        },
+        {
+            name: "Cumpleaños y Salones",
+            href: "/dashboard/parties",
+            icon: "🎂",
+            roles: ["ADMIN", "SUPERADMIN", "MANAGER", "CASHIER", "admin", "cajera"]
+        },
+        {
+            name: "Clientes y Waivers",
+            href: "/dashboard/customers",
+            icon: "📋",
+            roles: ["ADMIN", "SUPERADMIN", "MANAGER", "CASHIER", "STAFF", "admin", "cajera", "operador"]
+        },
+        {
+            name: "Gestión de Personal",
+            href: "/dashboard/users",
+            icon: "👥",
+            roles: ["ADMIN", "SUPERADMIN", "admin"]
+        },
+        {
+            name: "Configuración y Tarifas",
+            href: "/dashboard/settings",
+            icon: "⚙️",
+            roles: ["ADMIN", "SUPERADMIN", "MANAGER", "admin"]
+        },
     ]
 
-    // Filtrar ítems visibles según el rol del usuario logueado
-    const visibleNavigation = navigation.filter(item => item.roles.includes(userRole))
+    // 4. Filtrar ítems comparando tanto el valor raw como el normalizado
+    const visibleNavigation = navigation.filter(item =>
+        item.roles.includes(userRole) || item.roles.includes(String(rawRole))
+    )
 
     return (
         <>
@@ -35,12 +90,12 @@ export function Sidebar() {
                 <Link href="/dashboard" className="flex items-center gap-2">
                     <span className="text-xl font-black text-amber-400">POKIDDO</span>
                     <span className="text-[10px] bg-amber-400/10 text-amber-400 px-2 py-0.5 rounded-full font-bold uppercase border border-amber-400/20">
-                        {userRole}
+                        {ROLE_DISPLAY_NAMES[userRole] || userRole}
                     </span>
                 </Link>
                 <button
                     onClick={() => setIsOpen(!isOpen)}
-                    className="p-2 text-slate-300 hover:text-white bg-slate-900 rounded-xl border border-slate-800"
+                    className="p-2 text-slate-300 hover:text-white bg-slate-900 rounded-xl border border-slate-800 cursor-pointer"
                     aria-label="Abrir menú"
                 >
                     {isOpen ? "✕" : "☰"}
@@ -65,7 +120,7 @@ export function Sidebar() {
                         <Link href="/dashboard" className="flex items-center gap-2">
                             <span className="text-2xl font-black tracking-wider text-amber-400">POKIDDO</span>
                             <span className="text-[10px] bg-amber-400/10 text-amber-400 px-2 py-0.5 rounded-full font-bold uppercase border border-amber-400/20">
-                                {userRole}
+                                {ROLE_DISPLAY_NAMES[userRole] || userRole}
                             </span>
                         </Link>
                     </div>
@@ -107,7 +162,7 @@ export function Sidebar() {
                                 {user?.fullName || user?.primaryEmailAddress?.emailAddress}
                             </p>
                             <p className="text-[10px] text-slate-400 capitalize truncate">
-                                Rol: {userRole}
+                                Rol: {ROLE_DISPLAY_NAMES[userRole] || userRole}
                             </p>
                         </div>
                     </div>

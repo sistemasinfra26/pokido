@@ -21,6 +21,11 @@ enum UserRole {
   CUSTOMER
 }
 
+enum SalesChannel {
+  POS
+  WEB
+}
+
 enum TicketStatus {
   ACTIVE
   IN_USE
@@ -413,6 +418,12 @@ model CashShift {
 model Order {
   id              String        @id @default(uuid())
   orderNumber     String        @unique @map("order_number") // Ej: "ORD-2026-0001"
+  channel         SalesChannel  @default(POS) // Identifica si fue WEB o POS
+  
+  // Referencias de Mercado Pago
+  mpPreferenceId  String?       @unique @map("mp_preference_id") // ID de preferencia generado
+  mpPaymentId     String?       @unique @map("mp_payment_id")    // ID de pago de MP al confirmar
+  
   customerId      String?       @map("customer_id")
   staffId         String?       @map("staff_id")
   cashRegisterId  String?       @map("cash_register_id")

@@ -6,8 +6,10 @@ export default async function UsersPage() {
     const user = await currentUser()
     const role = (user?.publicMetadata as any)?.role
 
-    // Protegemos la ruta directamente en el servidor
-    if (role !== "admin") {
+    // Permitimos acceso a administradores
+    const isAdmin = ["ADMIN", "SUPERADMIN", "admin"].includes(role)
+
+    if (!isAdmin) {
         redirect("/dashboard")
     }
 

@@ -1,8 +1,8 @@
 "use server"
 
 import { prisma } from "@/lib/prisma"
-import { TicketStatus } from "@prisma/client"
 import { revalidatePath } from "next/cache"
+import { WristbandStatus, TicketStatus } from "@prisma/client"
 
 export async function getActiveParkChildren() {
     try {
@@ -105,5 +105,88 @@ export async function processChildCheckout(childId: string, ticketId: string) {
     } catch (error: any) {
         console.error("Error en Check-out:", error)
         return { success: false, error: error.message || "Error al procesar salida." }
+    }
+}
+
+export async function findOrderByQrOrCode(searchQuery: string) {
+    try {
+        const cleanQuery = searchQuery.trim().toUpperCase()
+
+        const order = await prisma.order.findFirst({
+            where: {
+                OR: [
+                    { orderNumber: cleanQuery },
+                    { tickets: { some: { qrCode: cleanQuery } } },
+                ],
+            },
+            include: {
+                customer: true,
+                tickets: {
+                    include: {
+                        minor: true,
+                        ticketType: true,
+                        wristband: true,
+                    },
+                },
+            },
+        })
+
+        if (!order) {
+            return { success: false, error: "No se encontró ninguna reserva o ticket con ese código." }
+        }
+
+        return { success: true, order }
+    } catch (error: any) {
+        return { success: false, error: error.message }
+    }
+}
+
+export async function assignWristbandToTicket(ticketId: string, wristbandCode: string, color: string) {
+    try {
+        if (!wristbandCode.trim()) {
+            return { success: false, error: "Debes ingresar o escanear el código de la pulsera física." }
+        }
+
+        const cleanCode = wristbandCode.trim().toUpperCase()
+
+        // 1. Verificar o crear la pulsera
+        let wristband = await prisma.wristband.findUnique({
+            where: { code: cleanCode },
+        })
+
+        if (!wristband) {
+            wristband = await prisma.wristband.create({
+                data: {
+                    code: cleanCode,
+                    color: color || "AZUL",
+                    status: WristbandStatus.ASSIGNED,
+                    ticketId,
+                    assignedAt: new Date(),
+                },
+            })
+        } else {
+            await prisma.wristband.update({
+                where: { id: wristband.id },
+                data: {
+                    ticketId,
+                    status: WristbandStatus.ASSIGNED,
+                    assignedAt: new Date(),
+                },
+            })
+        }
+
+        // 2. Activar ticket e iniciar tiempo en pista
+        await prisma.ticket.update({
+            where: { id: ticketId },
+            data: {
+                status: TicketStatus.IN_USE,
+                startTime: new Date(),
+            },
+        })
+
+        revalidatePath("/dashboard/access")
+        return { success: true }
+    } catch (error: any) {
+        return { success: false, error: "Error al asignar la pulsera." }
     }
 }

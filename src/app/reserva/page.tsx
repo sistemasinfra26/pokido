@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { getPublicSlotAvailability, createOnlineOrder, SlotStatus } from "@/app/actions/webBookingActions"
 import { getTicketTypes } from "@/app/actions/ticketTypeActions"
+import { createMercadoPagoPreference } from "@/app/actions/checkoutActions"
 
 export default function WebBookingPage() {
     const [step, setStep] = useState<1 | 2 | 3>(1)
@@ -74,6 +75,7 @@ export default function WebBookingPage() {
         setMinors(minors.filter((_, i) => i !== idx))
     }
 
+    // 🔑 INTEGRACIÓN CON MERCADO PAGO
     const handleConfirmBooking = async () => {
         if (!selectedSlot) return
         setLoadingProcessing(true)
@@ -85,6 +87,7 @@ export default function WebBookingPage() {
             price: m.price,
         }))
 
+        // 1. Crear la orden PENDING en la Base de Datos
         const res = await createOnlineOrder({
             customerDni,
             customerName,
@@ -96,13 +99,21 @@ export default function WebBookingPage() {
             minors: formattedMinors,
         })
 
-        setLoadingProcessing(false)
+        if (!res.success || !res.orderId) {
+            alert(res.error || "Error al procesar la pre-reserva.")
+            setLoadingProcessing(false)
+            return
+        }
 
-        if (res.success) {
-            setCompletedOrder(res)
-            setStep(3)
+        // 2. Generar Preferencia de Pago en Mercado Pago
+        const mpRes = await createMercadoPagoPreference(res.orderId)
+
+        if (mpRes.success && mpRes.initPoint) {
+            // 3. Redirigir al cliente al Checkout de Mercado Pago
+            window.location.href = mpRes.initPoint
         } else {
-            alert(res.error || "Error al procesar la reserva.")
+            alert(mpRes.error || "No se pudo conectar con la pasarela de Mercado Pago.")
+            setLoadingProcessing(false)
         }
     }
 
@@ -323,13 +334,13 @@ export default function WebBookingPage() {
                                 onClick={handleConfirmBooking}
                                 className="bg-pokido-green hover:bg-emerald-600 disabled:opacity-40 text-slate-950 font-black px-6 py-3.5 rounded-2xl transition text-xs shadow-lg shadow-emerald-950 cursor-pointer"
                             >
-                                {processing ? "Procesando..." : "💳 Pagar y Confirmar"}
+                                {processing ? "Redirigiendo a Mercado Pago..." : "💳 Pagar con Mercado Pago"}
                             </button>
                         </div>
                     </div>
                 )}
 
-                {/* PASO 3: CONFIRMACIÓN Y COMPROBANTE CON QR */}
+                {/* PASO 3: CONFIRMACIÓN POST PAGO (Se activa al regresar desde Mercado Pago) */}
                 {step === 3 && completedOrder && (
                     <div className="bg-slate-800 p-8 rounded-3xl border border-slate-700 text-center space-y-6 animate-in zoom-in duration-200">
                         <div className="w-16 h-16 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center text-3xl mx-auto border border-emerald-500/30">
@@ -343,7 +354,6 @@ export default function WebBookingPage() {
                             </p>
                         </div>
 
-                        {/* CÓDIGO QR GENERADO PARA MOSTRAR EN ACCESOS */}
                         <div className="p-6 bg-white rounded-3xl inline-block shadow-2xl">
                             <div className="w-44 h-44 bg-slate-900 text-white flex flex-col items-center justify-center font-mono font-bold text-center text-xs p-2 rounded-xl">
                                 <span>📱 SCAN EN RECEPCIÓN</span>
