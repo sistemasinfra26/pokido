@@ -2,6 +2,7 @@
 
 import { prisma } from "@/lib/prisma"
 import { PARK_TOTAL_MAX_CAPACITY } from "@/lib/capacityLogic"
+import { SalesChannel, OrderStatus, TicketStatus } from "@prisma/client"
 
 export interface SlotStatus {
     slot: string
@@ -34,11 +35,17 @@ const ALL_SLOTS = [
     "18:00", "18:30", "19:00", "19:30", "20:00"
 ]
 
-// 1. Obtener cupos disponibles por turno para la web pública
+// 1. Obtener cupos disponibles por turno bloqueando los horarios pasados
 export async function getPublicSlotAvailability(dateStr: string) {
     try {
         const now = new Date()
-        const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`
+
+        // Formatear la fecha actual en YYYY-MM-DD
+        const year = now.getFullYear()
+        const month = String(now.getMonth() + 1).padStart(2, "0")
+        const day = String(now.getDate()).padStart(2, "0")
+        const todayStr = `${year}-${month}-${day}`
+
         const isToday = dateStr === todayStr
 
         const selectedDate = new Date(`${dateStr}T00:00:00`)
@@ -51,7 +58,7 @@ export async function getPublicSlotAvailability(dateStr: string) {
         const tickets = await prisma.ticket.findMany({
             where: {
                 validDate: { gte: startOfDay, lte: endOfDay },
-                status: { in: ["ACTIVE", "IN_USE"] },
+                status: { in: [TicketStatus.ACTIVE, TicketStatus.IN_USE] },
             },
             select: {
                 startTime: true,
@@ -113,13 +120,14 @@ export async function getPublicSlotAvailability(dateStr: string) {
             }
         })
 
-        // C. Filtro de expiración por hora actual
+        // C. Minutos transcurridos en el día de hoy para anular turnos pasados
         const currentMins = now.getHours() * 60 + now.getMinutes()
 
         const slots: SlotStatus[] = ALL_SLOTS.map((slot) => {
             const [h, m] = slot.split(":").map(Number)
             const slotMins = h * 60 + m
 
+            // Anular si la fecha elegida es hoy y la hora del turno ya pasó
             const isPast = isToday && slotMins <= currentMins
             const taken = occupancyMap[slot] || 0
             const available = Math.max(0, PARK_TOTAL_MAX_CAPACITY - taken)
@@ -143,7 +151,7 @@ export async function getPublicSlotAvailability(dateStr: string) {
     }
 }
 
-// 2. Procesar reserva e intento de pago online (🔑 EXPORTACIÓN EXPLÍCITA)
+// 2. Procesar reserva e integración previa a Mercado Pago
 export async function createOnlineOrder(input: OnlineBookingInput) {
     try {
         const { customerDni, customerName, customerPhone, customerEmail, dateStr, timeSlot, signedWaiver, minors } = input
@@ -156,27 +164,41 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
             return { success: false, error: "Es obligatorio firmar el deslinde de responsabilidad (Waiver)." }
         }
 
-        // A. Crear o actualizar cliente (Tutor)
         const cleanDni = customerDni.replace(/[^0-9kK]/g, "").trim()
+        const cleanEmail = customerEmail.trim().toLowerCase()
 
+        // A. Buscar si el cliente ya existe por DNI o Email para no duplicarlo
         let customer = await prisma.customer.findFirst({
             where: {
-                OR: [{ dni: cleanDni }, { dni: customerDni.trim() }],
+                OR: [
+                    { dni: cleanDni },
+                    { email: cleanEmail },
+                ],
             },
         })
 
         if (!customer) {
             customer = await prisma.customer.create({
                 data: {
-                    dni: cleanDni || customerDni.trim(),
+                    dni: cleanDni,
                     fullName: customerName.trim(),
                     phone: customerPhone.trim(),
-                    email: customerEmail.trim(),
+                    email: cleanEmail,
+                },
+            })
+        } else {
+            // Actualizar teléfono y nombre si sufrió modificaciones
+            await prisma.customer.update({
+                where: { id: customer.id },
+                data: {
+                    fullName: customerName.trim(),
+                    phone: customerPhone.trim(),
+                    email: cleanEmail,
                 },
             })
         }
 
-        // B. Registrar Waiver firmado (vigente por 1 año)
+        // B. Registrar Waiver firmado
         const expiresAt = new Date()
         expiresAt.setFullYear(expiresAt.getFullYear() + 1)
 
@@ -189,21 +211,22 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
             },
         })
 
-        // C. Crear la Orden de Compra
+        // C. Crear la Orden de Compra Web en estado PENDING
         const totalAmount = minors.reduce((acc, m) => acc + m.price, 0)
         const orderNumber = `WEB-${Date.now().toString().slice(-6)}`
 
         const newOrder = await prisma.order.create({
             data: {
                 orderNumber,
+                channel: SalesChannel.WEB,
                 customerId: customer.id,
                 subtotal: totalAmount,
                 total: totalAmount,
-                status: "PENDING",
+                status: OrderStatus.PENDING,
             },
         })
 
-        // D. Crear los Menores y sus Tickets
+        // D. Crear Menores y Generar Tickets Asociados
         const [hours, minutes] = timeSlot.split(":").map(Number)
         const ticketDate = new Date(`${dateStr}T00:00:00`)
 
@@ -247,7 +270,7 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
                     startTime,
                     endTime,
                     qrCode,
-                    status: "ACTIVE",
+                    status: TicketStatus.ACTIVE,
                 },
             })
         }

@@ -3,13 +3,16 @@
 import { clerkClient, currentUser } from "@clerk/nextjs/server"
 import { revalidatePath } from "next/cache"
 
-export async function inviteStaffMember(email: string, role: "admin" | "cajera" | "operador") {
+export type AppRole = "ADMIN" | "MANAGER" | "CASHIER" | "STAFF"
+
+export async function inviteStaffMember(email: string, role: AppRole) {
     try {
         const user = await currentUser()
         const currentRole = (user?.publicMetadata as any)?.role
 
-        if (currentRole !== "admin") {
-            return { success: false, error: "Solo los administradores pueden invitar personal." }
+        // Permitimos que ADMIN y MANAGER puedan invitar personal
+        if (!["ADMIN", "SUPERADMIN", "admin"].includes(currentRole)) {
+            return { success: false, error: "Solo administradores pueden invitar personal." }
         }
 
         const client = await clerkClient()
@@ -29,11 +32,11 @@ export async function inviteStaffMember(email: string, role: "admin" | "cajera" 
             console.warn("Error al limpiar invitaciones previas:", cleanError)
         }
 
-        // 2. Usar NEXT_PUBLIC_BASE_URL de tu .env
+        // 2. URL de redirección dinámica según .env
         const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
         const redirectUrl = `${baseUrl.replace(/\/$/, "")}/dashboard`
 
-        // 3. Crear la invitación en Clerk
+        // 3. Crear invitación con el Enum exacto
         const invitation = await client.invitations.createInvitation({
             emailAddress: normalizedEmail,
             publicMetadata: { role },
@@ -58,26 +61,83 @@ export async function inviteStaffMember(email: string, role: "admin" | "cajera" 
     }
 }
 
-// 2. Obtener la lista de usuarios con rol de personal
 export async function getStaffList() {
     try {
         const client = await clerkClient()
         const response = await client.users.getUserList({ limit: 100 })
 
         const staff = response.data
-            .map((u) => ({
-                id: u.id,
-                firstName: u.firstName,
-                lastName: u.lastName,
-                email: u.emailAddresses[0]?.emailAddress,
-                role: (u.publicMetadata as any)?.role || "customer",
-                imageUrl: u.imageUrl,
-                createdAt: u.createdAt,
-            }))
-            .filter((u) => u.role !== "customer") // Filtrar solo el personal interno
+            .map((u) => {
+                const rawRole = (u.publicMetadata as any)?.role || "CUSTOMER"
+                let role: AppRole | "CUSTOMER" = "CUSTOMER"
+
+                if (["ADMIN", "admin"].includes(rawRole)) role = "ADMIN"
+                else if (["MANAGER", "manager"].includes(rawRole)) role = "MANAGER"
+                else if (["CASHIER", "cajera"].includes(rawRole)) role = "CASHIER"
+                else if (["STAFF", "operador"].includes(rawRole)) role = "STAFF"
+
+                return {
+                    id: u.id,
+                    firstName: u.firstName,
+                    lastName: u.lastName,
+                    email: u.emailAddresses[0]?.emailAddress,
+                    role,
+                    imageUrl: u.imageUrl,
+                    createdAt: u.createdAt,
+                }
+            })
+            .filter((u) => u.role !== "CUSTOMER")
 
         return { success: true, staff }
     } catch (error: any) {
         return { success: false, staff: [] }
+    }
+}
+
+// 🔑 CAMBIAR ROL DE UN USUARIO EXISTENTE
+export async function updateStaffRole(userId: string, newRole: AppRole) {
+    try {
+        const user = await currentUser()
+        const currentRole = (user?.publicMetadata as any)?.role
+
+        if (!["ADMIN", "SUPERADMIN", "admin"].includes(currentRole)) {
+            return { success: false, error: "No tienes permisos para modificar roles." }
+        }
+
+        const client = await clerkClient()
+        await client.users.updateUserMetadata(userId, {
+            publicMetadata: { role: newRole },
+        })
+
+        revalidatePath("/dashboard/users")
+        return { success: true }
+    } catch (error: any) {
+        console.error("Error al actualizar rol:", error)
+        return { success: false, error: "No se pudo actualizar el rol del usuario." }
+    }
+}
+
+// 🔑 ELIMINAR/REVOCAR ACCESO A UN USUARIO
+export async function deleteStaffMember(userId: string) {
+    try {
+        const user = await currentUser()
+        const currentRole = (user?.publicMetadata as any)?.role
+
+        if (!["ADMIN", "SUPERADMIN", "admin"].includes(currentRole)) {
+            return { success: false, error: "No tienes permisos para eliminar empleados." }
+        }
+
+        if (user?.id === userId) {
+            return { success: false, error: "No puedes eliminar tu propia cuenta de administrador." }
+        }
+
+        const client = await clerkClient()
+        await client.users.deleteUser(userId)
+
+        revalidatePath("/dashboard/users")
+        return { success: true }
+    } catch (error: any) {
+        console.error("Error al eliminar usuario:", error)
+        return { success: false, error: "No se pudo eliminar al usuario." }
     }
 }
