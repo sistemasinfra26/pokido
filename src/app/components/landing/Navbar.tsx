@@ -13,7 +13,7 @@ export function Navbar() {
                 {/* BRANDING LOGO */}
                 <Link href="/" className="flex items-center gap-2 group">
                     <span className="text-3xl font-black tracking-wider text-pokido-purple transition group-hover:opacity-90">
-                        POKIDO
+                        POKIDDO
                     </span>
                     <span className="text-xs bg-pokido-purple/10 text-pokido-purple px-2 py-1 rounded-full font-extrabold uppercase border border-pokido-purple/20">
                         Park

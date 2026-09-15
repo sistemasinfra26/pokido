@@ -32,21 +32,30 @@ const ALL_SLOTS = [
     "12:00", "12:30", "13:00", "13:30",
     "14:00", "14:30", "15:00", "15:30",
     "16:00", "16:30", "17:00", "17:30",
-    "18:00", "18:30", "19:00", "19:30", "20:00"
+    "18:00", "18:30", "19:00", "19:30",
+    "20:00", "20:30", "21:00", "21:30" // 👈 Agregados turnos nocturnos
 ]
 
-// 1. Obtener cupos disponibles por turno bloqueando los horarios pasados
+// Configura la zona horaria local del parque
+const TIMEZONE = "America/Santiago" // O "America/Argentina/Buenos_Aires"
+
 export async function getPublicSlotAvailability(dateStr: string) {
     try {
         const now = new Date()
 
-        // Formatear la fecha actual en YYYY-MM-DD
-        const year = now.getFullYear()
-        const month = String(now.getMonth() + 1).padStart(2, "0")
-        const day = String(now.getDate()).padStart(2, "0")
-        const todayStr = `${year}-${month}-${day}`
+        // 🔑 Obtener la fecha local formateada YYYY-MM-DD
+        const localDateStr = now.toLocaleDateString("en-CA", { timeZone: TIMEZONE })
+        const isToday = dateStr === localDateStr
 
-        const isToday = dateStr === todayStr
+        // 🔑 Obtener la hora local actual en minutos
+        const localTimeString = now.toLocaleTimeString("en-US", {
+            timeZone: TIMEZONE,
+            hour12: false,
+            hour: "2-digit",
+            minute: "2-digit",
+        })
+        const [currentHour, currentMinute] = localTimeString.split(":").map(Number)
+        const currentMins = currentHour * 60 + currentMinute
 
         const selectedDate = new Date(`${dateStr}T00:00:00`)
         const startOfDay = new Date(selectedDate)
@@ -120,14 +129,12 @@ export async function getPublicSlotAvailability(dateStr: string) {
             }
         })
 
-        // C. Minutos transcurridos en el día de hoy para anular turnos pasados
-        const currentMins = now.getHours() * 60 + now.getMinutes()
-
+        // C. Anular turnos pasados según hora LOCAL
         const slots: SlotStatus[] = ALL_SLOTS.map((slot) => {
             const [h, m] = slot.split(":").map(Number)
             const slotMins = h * 60 + m
 
-            // Anular si la fecha elegida es hoy y la hora del turno ya pasó
+            // Solo deshabilitar si es HOY y la hora local ya transcurrió
             const isPast = isToday && slotMins <= currentMins
             const taken = occupancyMap[slot] || 0
             const available = Math.max(0, PARK_TOTAL_MAX_CAPACITY - taken)
@@ -285,5 +292,27 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
     } catch (error: any) {
         console.error("Error al registrar orden web:", error)
         return { success: false, error: error.message }
+    }
+}
+
+export async function findCustomerByDni(dni: string) {
+    try {
+        const cleanDni = dni.replace(/[^0-9kK]/g, "").trim()
+        if (!cleanDni) return { success: false }
+
+        const customer = await prisma.customer.findFirst({
+            where: { dni: cleanDni },
+            select: {
+                fullName: true,
+                phone: true,
+                email: true,
+            },
+        })
+
+        if (!customer) return { success: false }
+
+        return { success: true, customer }
+    } catch (error) {
+        return { success: false }
     }
 }

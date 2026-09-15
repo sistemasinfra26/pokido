@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { getPublicSlotAvailability, createOnlineOrder, SlotStatus } from "@/app/actions/webBookingActions"
+import { getPublicSlotAvailability, createOnlineOrder, findCustomerByDni, SlotStatus } from "@/app/actions/webBookingActions"
 import { getTicketTypes } from "@/app/actions/ticketTypeActions"
 import { createMercadoPagoPreference } from "@/app/actions/checkoutActions"
 
@@ -20,6 +20,7 @@ export default function WebBookingPage() {
     const [customerName, setCustomerName] = useState("")
     const [customerPhone, setCustomerPhone] = useState("")
     const [customerEmail, setCustomerEmail] = useState("")
+    const [searchingCustomer, setSearchingCustomer] = useState(false)
     const [signedWaiver, setSignedWaiver] = useState(false)
 
     const [minors, setMinors] = useState<Array<{ fullName: string; age: string; ticketTypeId: string; price: number }>>([])
@@ -52,6 +53,21 @@ export default function WebBookingPage() {
         }
         fetchAvailability()
     }, [dateStr])
+
+    // 🔑 BÚSQUEDA AUTOMÁTICA DE CLIENTE AL INGRESAR DNI / RUT
+    const handleDniBlur = async () => {
+        if (!customerDni.trim()) return
+
+        setSearchingCustomer(true)
+        const res = await findCustomerByDni(customerDni)
+        setSearchingCustomer(false)
+
+        if (res.success && res.customer) {
+            setCustomerName(res.customer.fullName || "")
+            setCustomerPhone(res.customer.phone || "")
+            setCustomerEmail(res.customer.email || "")
+        }
+    }
 
     const calculateTotal = () => {
         return minors.reduce((sum, m) => sum + m.price, 0)
@@ -206,11 +222,15 @@ export default function WebBookingPage() {
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
-                                <label className="text-xs font-bold text-slate-400 mb-1 block">DNI / RUT Adulto *</label>
+                                <div className="flex justify-between items-center mb-1">
+                                    <label className="text-xs font-bold text-slate-400 block">DNI / RUT Adulto *</label>
+                                    {searchingCustomer && <span className="text-[10px] text-pokido-cyan animate-pulse">Buscando datos...</span>}
+                                </div>
                                 <input
                                     type="text"
                                     placeholder="Ej. 18234567-K"
                                     value={customerDni}
+                                    onBlur={handleDniBlur}
                                     onChange={(e) => setCustomerDni(e.target.value)}
                                     className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-pokido-cyan"
                                 />
@@ -273,7 +293,7 @@ export default function WebBookingPage() {
                                             <button onClick={() => handleRemoveMinorRow(idx)} className="text-red-400 cursor-pointer">Quitar</button>
                                         )}
                                     </div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
                                         <input
                                             type="text"
                                             placeholder="Nombre del Niño/a *"
@@ -285,6 +305,22 @@ export default function WebBookingPage() {
                                             }}
                                             className="sm:col-span-2 bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white"
                                         />
+
+                                        {/* 🔑 CAMPO EDAD */}
+                                        <input
+                                            type="number"
+                                            min="1"
+                                            max="17"
+                                            placeholder="Edad *"
+                                            value={m.age}
+                                            onChange={(e) => {
+                                                const updated = [...minors]
+                                                updated[idx].age = e.target.value
+                                                setMinors(updated)
+                                            }}
+                                            className="bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-bold text-center"
+                                        />
+
                                         <select
                                             value={m.ticketTypeId}
                                             onChange={(e) => {
@@ -330,7 +366,7 @@ export default function WebBookingPage() {
                             </div>
                             <button
                                 type="button"
-                                disabled={processing || !signedWaiver || !customerDni || minors.some((m) => !m.fullName)}
+                                disabled={processing || !signedWaiver || !customerDni || minors.some((m) => !m.fullName || !m.age)}
                                 onClick={handleConfirmBooking}
                                 className="bg-pokido-green hover:bg-emerald-600 disabled:opacity-40 text-slate-950 font-black px-6 py-3.5 rounded-2xl transition text-xs shadow-lg shadow-emerald-950 cursor-pointer"
                             >
@@ -340,7 +376,7 @@ export default function WebBookingPage() {
                     </div>
                 )}
 
-                {/* PASO 3: CONFIRMACIÓN POST PAGO (Se activa al regresar desde Mercado Pago) */}
+                {/* PASO 3: CONFIRMACIÓN POST PAGO */}
                 {step === 3 && completedOrder && (
                     <div className="bg-slate-800 p-8 rounded-3xl border border-slate-700 text-center space-y-6 animate-in zoom-in duration-200">
                         <div className="w-16 h-16 bg-emerald-500/20 text-emerald-400 rounded-full flex items-center justify-center text-3xl mx-auto border border-emerald-500/30">
