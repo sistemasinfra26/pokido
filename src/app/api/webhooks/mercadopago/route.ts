@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { MercadoPagoConfig, Payment } from "mercadopago"
 import { prisma } from "@/lib/prisma"
-import { OrderStatus, PaymentStatus, PaymentMethod } from "@prisma/client"
+import { OrderStatus, PaymentStatus, PaymentMethod, TicketStatus } from "@prisma/client"
 import { sendTicketEmail } from "@/lib/email"
 
 // Inicializar el SDK de Mercado Pago con tu Access Token privado
@@ -48,8 +48,15 @@ export async function POST(request: Request) {
 
             // 4. Si el pago fue APROBADO por Mercado Pago
             if (paymentInfo.status === "approved") {
+                // 🔑 1. CONTROL DE IDEMPOTENCIA: Si la orden ya fue procesada, ignorar reintentos de MP
+                if (order.status === OrderStatus.COMPLETED) {
+                    console.log(`[MP Webhook] Orden ${orderNumber} ya procesada anteriormente. Se omite duplicación.`)
+                    return NextResponse.json({ received: true }, { status: 200 })
+                }
+
+                // 2. Transacción atómica en PostgreSQL
                 await prisma.$transaction([
-                    // A. Actualizar estado de la orden a COMPLETED y guardar IDs de MP
+                    // A. Actualizar estado de la orden a COMPLETED y guardar ID de pago
                     prisma.order.update({
                         where: { id: order.id },
                         data: {
@@ -58,7 +65,15 @@ export async function POST(request: Request) {
                         },
                     }),
 
-                    // B. Registrar el pago en la tabla Payment
+                    // B. Activar todos los Tickets asociados a esta orden
+                    prisma.ticket.updateMany({
+                        where: { orderId: order.id },
+                        data: {
+                            status: TicketStatus.ACTIVE,
+                        },
+                    }),
+
+                    // C. Registrar el cobro en la tabla Payment
                     prisma.payment.create({
                         data: {
                             orderId: order.id,
@@ -72,13 +87,17 @@ export async function POST(request: Request) {
 
                 console.log(`[MP Webhook] Orden ${orderNumber} confirmada exitosamente.`)
 
-                // C. Disparar envío de correo con los códigos QR al cliente
+                // 3. Disparar envío de correo con los códigos QR al cliente
                 if (order.customer?.email) {
-                    await sendTicketEmail(
-                        order.customer.email,
-                        order.orderNumber,
-                        order.customer.fullName
-                    )
+                    try {
+                        await sendTicketEmail(
+                            order.customer.email,
+                            order.orderNumber,
+                            order.customer.fullName
+                        )
+                    } catch (emailErr) {
+                        console.error(`[MP Webhook Error Email]: No se pudo enviar el correo a ${order.customer.email}`, emailErr)
+                    }
                 }
             }
             // 5. Si el pago fue RECHAZADO o CANCELADO

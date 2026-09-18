@@ -38,7 +38,7 @@ export async function createMercadoPagoPreference(orderId: string) {
             title: `Pase Pokiddo Park - ${ticket.ticketType?.name || "Entrada"} (${ticket.minor?.fullName || "Menor"})`,
             unit_price: Number(ticket.price),
             quantity: 1,
-            currency_id: "CLP", // Cambiar a ARS o la moneda local configurada si corresponde
+            currency_id: "ARS",
         }))
 
         // Si por alguna razón no hay tickets detallados, usar el total global de la orden
@@ -48,7 +48,7 @@ export async function createMercadoPagoPreference(orderId: string) {
                 title: `Reserva Pokiddo Park - Orden ${order.orderNumber}`,
                 unit_price: Number(order.total),
                 quantity: 1,
-                currency_id: "CLP",
+                currency_id: "ARS",
             }
         ]
 

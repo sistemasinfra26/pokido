@@ -184,11 +184,14 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     },
                 })
 
-                // Si es un recargo, cerramos el ticket activo original
+                // 5. SI ES UN RECARGO POR EXCESO DE TIEMPO:
                 if (isOvertimePenalty) {
                     const originalTicket = await tx.ticket.findFirst({
                         where: {
-                            minorId: minor.id,
+                            OR: [
+                                { qrCode: { equals: item.wristbandCode, mode: "insensitive" } },
+                                { wristband: { code: { equals: item.wristbandCode, mode: "insensitive" } } },
+                            ],
                             status: TicketStatus.ACTIVE,
                         },
                     })
@@ -196,7 +199,9 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     if (originalTicket) {
                         await tx.ticket.update({
                             where: { id: originalTicket.id },
-                            data: { status: TicketStatus.USED },
+                            data: {
+                                status: TicketStatus.USED, // Cambia el estado a USED para sacarlo de la pista
+                            },
                         })
                     }
 
