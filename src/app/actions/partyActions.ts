@@ -4,7 +4,6 @@ import { prisma } from "@/lib/prisma"
 import { BookingStatus, WristbandStatus } from "@prisma/client"
 import { revalidatePath } from "next/cache"
 
-
 export interface PartyRoomInput {
     id?: string
     name: string
@@ -14,6 +13,19 @@ export interface PartyRoomInput {
     imageUrl?: string
     includes?: string[]
     isActive?: boolean
+}
+
+// Helper para convertir instancias de Decimal y Dates a tipos primitivos seguros
+function sanitizeBooking(b: any) {
+    if (!b) return null
+    return {
+        ...b,
+        totalPrice: b.totalPrice ? Number(b.totalPrice) : 0,
+        depositPaid: b.depositPaid ? Number(b.depositPaid) : 0,
+        date: b.date instanceof Date ? b.date.toISOString() : b.date,
+        createdAt: b.createdAt instanceof Date ? b.createdAt.toISOString() : b.createdAt,
+        updatedAt: b.updatedAt instanceof Date ? b.updatedAt.toISOString() : b.updatedAt,
+    }
 }
 
 // Obtener la lista de salones, reservas de cumpleaños de hoy Y los niños activos en parque
@@ -26,7 +38,7 @@ export async function getPartyRoomsData() {
         tomorrow.setDate(tomorrow.getDate() + 1)
 
         // 1. Obtener salones con reservas de cumpleaños para HOY
-        const rooms = await prisma.partyRoom.findMany({
+        const rawRooms = await prisma.partyRoom.findMany({
             where: {
                 isActive: true,
             },
@@ -47,12 +59,18 @@ export async function getPartyRoomsData() {
             },
         })
 
-        // 2. Contar niños activos DENTRO DEL PARQUE en este instante
+        // Sanitizamos los Decimal dentro de las reservas de cada salón
+        const rooms = rawRooms.map((room) => ({
+            ...room,
+            bookings: room.bookings.map((b) => sanitizeBooking(b)),
+        }))
+
+        // 2. Contar niños activos DENTRO DEL PARQUE
         const now = new Date()
 
         const activeChildrenInPark = await prisma.ticket.count({
             where: {
-                status: "IN_USE", // O WristbandStatus.IN_PARK
+                status: "IN_USE",
                 startTime: { lte: now },
                 endTime: { gte: now },
             },
@@ -61,7 +79,7 @@ export async function getPartyRoomsData() {
         return {
             success: true,
             rooms,
-            activeChildrenInPark
+            activeChildrenInPark,
         }
     } catch (error: any) {
         console.error("Error al obtener salones de cumpleaños:", error)
@@ -77,9 +95,9 @@ export interface CreatePartyBookingInput {
     birthdayChild: string
     childAge: number
     guestCount: number
-    dateStr: string        // "2026-08-28"
-    startTimeStr: string   // "17:00"
-    endTimeStr: string     // "20:00"
+    dateStr: string
+    startTimeStr: string
+    endTimeStr: string
     totalPrice?: number
 }
 
@@ -104,7 +122,7 @@ export async function createPartyBooking(data: CreatePartyBookingInput) {
         const [year, month, day] = data.dateStr.split("-").map(Number)
         const bookingDate = new Date(year, month - 1, day, 0, 0, 0)
 
-        const booking = await prisma.booking.create({
+        const rawBooking = await prisma.booking.create({
             data: {
                 roomId: data.roomId,
                 customerId: customer.id,
@@ -125,7 +143,8 @@ export async function createPartyBooking(data: CreatePartyBookingInput) {
         revalidatePath("/dashboard/pos")
         revalidatePath("/dashboard/access")
 
-        return { success: true, booking }
+        // 🔑 Sanitizado antes de retornar al Client Component
+        return { success: true, booking: sanitizeBooking(rawBooking) }
     } catch (error: any) {
         console.error("Error al crear reserva de cumpleaños:", error)
         return { success: false, error: error.message }
@@ -158,6 +177,7 @@ export async function upsertPartyRoom(data: PartyRoomInput) {
 
         let room
         if (data.id) {
+            // 🔑 CORRECCIÓN: Agregamos ".partyRoom" antes de ".update"
             room = await prisma.partyRoom.update({
                 where: { id: data.id },
                 data: payload,
@@ -182,7 +202,6 @@ export async function upsertPartyRoom(data: PartyRoomInput) {
 
 export async function getMonthlyBookings(year: number, month: number) {
     try {
-        // Definir primer y último día del mes
         const startDate = new Date(year, month - 1, 1)
         const endDate = new Date(year, month, 0, 23, 59, 59)
 
@@ -217,6 +236,8 @@ export async function getMonthlyBookings(year: number, month: number) {
             customerName: b.customer?.fullName || "Sin tutor",
             customerPhone: b.customer?.phone || "",
             customerDni: b.customer?.dni || "",
+            totalPrice: Number(b.totalPrice || 0),
+            depositPaid: Number(b.depositPaid || 0),
         }))
 
         return { success: true, bookings: formattedBookings }

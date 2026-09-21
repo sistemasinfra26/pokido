@@ -29,7 +29,6 @@ export default function PartiesPage() {
     const loadData = async () => {
         setLoading(true)
 
-        // 🔑 CONSULTA PARALELA: Salones de cumpleaños + Datos de aforo en pista del Dashboard
         const [partyRes, dashRes] = await Promise.all([
             getPartyRoomsData(),
             getDashboardData(),
@@ -41,7 +40,6 @@ export default function PartiesPage() {
             setRooms(partyRes.rooms as any)
         }
 
-        // 🔑 FIX: Obtenemos el conteo exacto de niños en pista usando getDashboardData
         if (dashRes.success && dashRes.data) {
             const realActive =
                 dashRes.data.kpis?.aforoActual ??
@@ -55,17 +53,14 @@ export default function PartiesPage() {
 
     useEffect(() => {
         loadData()
-        // Recargar automáticamente cada 60 segundos para refrescar niños en pista
         const interval = setInterval(loadData, 60000)
         return () => clearInterval(interval)
     }, [])
 
-    // Cupos retenidos HOY por reservas de cumpleaños
     const totalReservedToday = rooms.reduce((acc, room) => {
         return acc + room.bookings.reduce((bAcc, b) => bAcc + b.guestCount, 0)
     }, 0)
 
-    // CÁLCULO DE AFORO REAL LIBRE: Capacity - (Cupos Retenidos por Cumple + Niños actualmente Jugando en Pista)
     const availableGeneralCapacity = Math.max(
         0,
         PARK_TOTAL_MAX_CAPACITY - totalReservedToday - activeInPark
@@ -110,7 +105,6 @@ export default function PartiesPage() {
 
     return (
         <div className="p-6 bg-slate-100 min-h-screen text-slate-800 font-sans space-y-6">
-            {/* HEADER DE BIENVENIDA Y AFORO NUCLEADO */}
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col lg:flex-row lg:items-center justify-between gap-6">
                 <div className="space-y-1">
                     <div className="inline-flex items-center gap-2 bg-pokido-purple/10 text-pokido-purple px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider border border-pokido-purple/20">
@@ -124,7 +118,6 @@ export default function PartiesPage() {
                     </p>
                 </div>
 
-                {/* METRICAS RÁPIDAS DE AFORO */}
                 <div className="flex flex-wrap items-center gap-3">
                     <div className="bg-slate-50 border border-slate-200/80 px-4 py-3 rounded-2xl text-center min-w-[110px]">
                         <span className="text-[10px] font-extrabold uppercase text-slate-400 block tracking-wider">Tope Parque</span>
@@ -148,7 +141,6 @@ export default function PartiesPage() {
                 </div>
             </div>
 
-            {/* SELECTOR DE PESTAÑAS (TABS) */}
             <div className="flex items-center gap-2 bg-slate-200/60 p-1.5 rounded-2xl w-fit">
                 <button
                     type="button"
@@ -184,7 +176,6 @@ export default function PartiesPage() {
                 </button>
             </div>
 
-            {/* CONTENIDO SEGÚN LA PESTAÑA SELECCIONADA */}
             {activeTab === "grid" && (
                 <PartyRoomsGrid
                     rooms={rooms}
@@ -201,14 +192,12 @@ export default function PartiesPage() {
                 />
             )}
 
-            {/* MODAL DE REGISTRO */}
             {selectedRoomId && (
                 <div className="fixed inset-0 bg-slate-950/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                     <form
                         onSubmit={handleCreateBooking}
                         className="bg-white rounded-3xl max-w-lg w-full p-6 space-y-5 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-200"
                     >
-                        {/* CABECERA DEL MODAL */}
                         <div className="flex justify-between items-center border-b border-slate-100 pb-4">
                             <div>
                                 <h3 className="font-black text-slate-900 text-lg flex items-center gap-2">
@@ -227,7 +216,6 @@ export default function PartiesPage() {
                             </button>
                         </div>
 
-                        {/* SECCIÓN 1: DATOS DEL ADULTO / TUTOR */}
                         <div className="space-y-3">
                             <span className="text-[11px] font-black uppercase text-slate-400 tracking-wider block">
                                 1. Datos del Responsable / Tutor
@@ -271,7 +259,6 @@ export default function PartiesPage() {
                             </div>
                         </div>
 
-                        {/* SECCIÓN 2: DATOS DEL EVENTO Y FESTEJADO */}
                         <div className="space-y-3 pt-2 border-t border-slate-100">
                             <span className="text-[11px] font-black uppercase text-slate-400 tracking-wider block">
                                 2. Detalles del Evento
@@ -350,7 +337,6 @@ export default function PartiesPage() {
                             </div>
                         </div>
 
-                        {/* AVISO INFORMATIVO DE AFORO */}
                         <div className="p-3.5 bg-amber-50 border border-amber-200/80 rounded-2xl text-[11px] font-bold text-amber-800 flex items-start gap-2">
                             <span className="text-sm">⚠️</span>
                             <p className="leading-snug">
@@ -358,7 +344,6 @@ export default function PartiesPage() {
                             </p>
                         </div>
 
-                        {/* BOTONES DE ACCIÓN */}
                         <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                             <button
                                 type="button"

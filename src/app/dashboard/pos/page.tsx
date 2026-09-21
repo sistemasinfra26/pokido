@@ -1,7 +1,7 @@
 "use client"
 
 import { useState, useEffect, Suspense } from "react"
-import { useSearchParams } from "next/navigation"
+import { useSearchParams, useRouter } from "next/navigation" // 👈 Importamos useRouter
 import { PaymentMethod } from "@prisma/client"
 import { PosHeader } from "./components/PosHeader"
 import { CustomerStep } from "./components/CustomerStep"
@@ -18,6 +18,7 @@ import { PARK_TOTAL_MAX_CAPACITY } from "@/lib/capacityLogic"
 
 function PosContent() {
     const searchParams = useSearchParams()
+    const router = useRouter() // 🔑 Instancia del router para limpiar la URL dinámicamente
 
     const timeParam = searchParams.get("time")
     const durationParam = searchParams.get("duration")
@@ -59,6 +60,7 @@ function PosContent() {
         loadOccupancy()
     }, [])
 
+    // 🔑 LECTURA Y CARGA DE RECARGO DE TIEMPO
     useEffect(() => {
         if (overtimeFeeParam) {
             const feeAmount = Number(overtimeFeeParam)
@@ -187,6 +189,7 @@ function PosContent() {
         setSelectedMinors((prev) => [...prev, overtimeCartItem])
     }
 
+    // 🔑 CONTROL DE SALIDA Y LIMPIEZA POST-VENTA EN POS
     const handleSuccessSale = async (saleResponse?: any) => {
         const receipt = saleResponse?.receiptData || saleResponse
         if (!receipt) return
@@ -210,8 +213,13 @@ function PosContent() {
 
         setReceiptData(formattedReceipt)
 
+        // Excluye ítems de penalización para NO pedir una pulsera nueva
         const pendingItems: PendingWristbandItem[] = createdTickets
-            .filter((t: any) => !t.wristbandCode || t.wristbandCode.startsWith("QR-"))
+            .filter((t: any) => {
+                const isPenalty = t.ticketTypeId === "OVERTIME-PENALTY" || t.minorName?.includes("RECARGO")
+                if (isPenalty) return false
+                return !t.wristbandCode || t.wristbandCode.startsWith("QR-")
+            })
             .map((t: any) => ({
                 ticketId: t.id,
                 minorName: t.minorName,
@@ -227,10 +235,14 @@ function PosContent() {
             setIsReceiptOpen(true)
         }
 
+        // 🚀 LIMPIEZA TOTAL DE ESTADOS Y REMOCIÓN DE PARÁMETROS EN LA URL
         setSelectedMinors([])
         setSelectedCustomer(null)
         setDniQuery("")
-        window.history.replaceState(null, "", "/dashboard/pos")
+
+        // 🔑 Reemplazamos la ruta para que Next.js elimine completamente la query string ?overtimeFee=...
+        router.replace("/dashboard/pos")
+
         await loadOccupancy()
     }
 
@@ -297,7 +309,7 @@ function PosContent() {
                         <button
                             type="button"
                             onClick={() => {
-                                window.history.replaceState(null, "", "/dashboard/pos")
+                                router.replace("/dashboard/pos")
                                 setSelectedMinors((prev) => prev.filter((i) => i.ticketTypeId !== "OVERTIME-PENALTY"))
                             }}
                             className="text-[11px] font-bold text-red-600 hover:text-red-800 bg-white border border-red-200 px-3 py-1.5 rounded-xl transition cursor-pointer"
@@ -319,7 +331,7 @@ function PosContent() {
                         <button
                             type="button"
                             onClick={() => {
-                                window.history.replaceState(null, "", "/dashboard/pos")
+                                router.replace("/dashboard/pos")
                                 const nowStr = new Date().toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit", hour12: false })
                                 setEntryTime(nowStr)
                             }}
@@ -330,10 +342,7 @@ function PosContent() {
                     </div>
                 )}
 
-                {/* ESTRUCTURA LIMPIA EN 2 COLUMNAS */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-
-                    {/* COLUMNA IZQUIERDA (2 Tercios) */}
                     <div className="lg:col-span-2 space-y-6">
                         <CustomerStep
                             dniQuery={dniQuery}
@@ -368,7 +377,6 @@ function PosContent() {
                         />
                     </div>
 
-                    {/* COLUMNA DERECHA (1 Tercio) */}
                     <div className="lg:col-span-1 lg:sticky lg:top-6">
                         <CartAndCheckoutSummary
                             selectedCustomer={selectedCustomer}
@@ -382,7 +390,6 @@ function PosContent() {
                 </div>
             </div>
 
-            {/* MODALES FLOTANTES */}
             {pendingAssignment && (
                 <WristbandAssignmentModal
                     orderNumber={pendingAssignment.orderNumber}

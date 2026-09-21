@@ -35,7 +35,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
 
         const result = await prisma.$transaction(async (tx) => {
 
-            // 1. VALIDAR O BUSCAR CLIENTE REAL EN BASE DE DATOS
+            // 1. VALIDAR O BUSCAR CLIENTE
             let validCustomerId = customerId
             let customerData = null
 
@@ -64,7 +64,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                 validCustomerId = customerData.id
             }
 
-            // 2. OBTENER O CREAR STAFF VÁLIDO
+            // 2. OBTENER STAFF
             let validStaffId = staffProfileId
 
             if (validStaffId) {
@@ -90,7 +90,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                 }
             }
 
-            // 3. CREAR LA ORDEN CON CLIENTE VÁLIDO
+            // 3. CREAR ORDEN
             const order = await tx.order.create({
                 data: {
                     orderNumber,
@@ -107,6 +107,8 @@ export async function processPosSale(data: CreatePosOrderInput) {
 
             // 4. PROCESAR ÍTEMS
             for (const item of items) {
+                const isOvertimePenalty = item.ticketTypeId === "OVERTIME-PENALTY"
+
                 let ticketType = await tx.ticketType.findFirst({
                     where: { durationMinutes: item.durationMinutes },
                 })
@@ -114,7 +116,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                 if (!ticketType) {
                     ticketType = await tx.ticketType.create({
                         data: {
-                            name: `Pase ${item.durationMinutes} Minutos`,
+                            name: isOvertimePenalty ? "Recargo Exceso Tiempo" : `Pase ${item.durationMinutes} Minutos`,
                             durationMinutes: item.durationMinutes,
                             price: item.price,
                         },
@@ -124,13 +126,13 @@ export async function processPosSale(data: CreatePosOrderInput) {
                 let minor = await tx.minor.findFirst({
                     where: {
                         customerId: validCustomerId,
-                        fullName: item.minorName.replace(" (RECARGO EXCESO DE TIEMPO)", "").trim(),
+                        fullName: item.minorName.replace(/ \(RECARGO.*\)/, "").trim(),
                     },
                 })
 
                 if (!minor) {
                     const birthDate = new Date()
-                    birthDate.setFullYear(birthDate.getFullYear() - item.minorAge)
+                    birthDate.setFullYear(birthDate.getFullYear() - (item.minorAge || 5))
 
                     minor = await tx.minor.create({
                         data: {
@@ -145,7 +147,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     data: {
                         orderId: order.id,
                         ticketTypeId: ticketType.id,
-                        description: `Pase ${item.durationMinutes} Min - ${item.minorName}`,
+                        description: isOvertimePenalty ? `Recargo Exceso de Tiempo - ${item.minorName}` : `Pase ${item.durationMinutes} Min - ${item.minorName}`,
                         quantity: 1,
                         unitPrice: item.price,
                         total: item.price,
@@ -162,7 +164,6 @@ export async function processPosSale(data: CreatePosOrderInput) {
 
                 const endTime = new Date(startTime.getTime() + item.durationMinutes * 60000)
 
-                const isOvertimePenalty = item.ticketTypeId === "OVERTIME-PENALTY"
                 const ticketQrCode = isOvertimePenalty
                     ? `${item.wristbandCode}-REC-${Date.now().toString().slice(-4)}`
                     : (item.wristbandCode && item.wristbandCode !== "RECARGO" && item.wristbandCode !== "REC-EXCESO"
@@ -184,7 +185,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     },
                 })
 
-                // 5. SI ES UN RECARGO POR EXCESO DE TIEMPO:
+                // 5. SI ES RECARGO: LIBERA LA PULSERA Y CIERRA EL TICKET ANTERIOR
                 if (isOvertimePenalty) {
                     const originalTicket = await tx.ticket.findFirst({
                         where: {
@@ -200,12 +201,12 @@ export async function processPosSale(data: CreatePosOrderInput) {
                         await tx.ticket.update({
                             where: { id: originalTicket.id },
                             data: {
-                                status: TicketStatus.USED, // Cambia el estado a USED para sacarlo de la pista
+                                status: TicketStatus.USED,
                             },
                         })
                     }
 
-                    if (item.wristbandCode && item.wristbandCode !== "RECARGO") {
+                    if (item.wristbandCode && item.wristbandCode !== "RECARGO" && item.wristbandCode !== "REC-EXCESO") {
                         const existingWristband = await tx.wristband.findUnique({
                             where: { code: item.wristbandCode },
                         })
@@ -221,7 +222,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     }
                 }
 
-                // Si es compra normal, asociamos la pulsera
+                // SI ES COMPRA DE PASE NUEVO: VINCULA LA PULSERA
                 if (!isOvertimePenalty && item.wristbandCode && item.wristbandCode !== "RECARGO" && item.wristbandCode !== "REC-EXCESO") {
                     await tx.wristband.upsert({
                         where: { code: item.wristbandCode },
@@ -240,7 +241,6 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     })
                 }
 
-                // 🔑 Guardamos los datos para estructurar el recibo post-venta (Sanitizando Decimales a Number)
                 createdTickets.push({
                     id: ticket.id,
                     qrCode: ticket.qrCode,
@@ -250,10 +250,11 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     minorName: minor.fullName,
                     durationMinutes: item.durationMinutes,
                     wristbandCode: item.wristbandCode,
+                    ticketTypeId: item.ticketTypeId, // 👈 Identificador clave enviado al cliente
                 })
             }
 
-            // 5. REGISTRAR PAGO
+            // 6. REGISTRAR PAGO
             await tx.payment.create({
                 data: {
                     orderId: order.id,
