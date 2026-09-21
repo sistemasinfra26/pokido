@@ -1,35 +1,57 @@
-import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server"
+import { clerkMiddleware, createRouteMatcher, createClerkClient } from "@clerk/nextjs/server"
 import { NextResponse } from "next/server"
 
 const isDashboardRoute = createRouteMatcher(["/dashboard(.*)"])
 
+const ALLOWED_STAFF_ROLES = [
+  "ADMIN",
+  "MANAGER",
+  "CASHIER",
+  "STAFF",
+  "SUPERADMIN",
+  "ADMINISTRADOR",
+  "admin",
+  "manager",
+  "cajera",
+  "operador"
+]
+
 export default clerkMiddleware(async (auth, req) => {
   if (isDashboardRoute(req)) {
-    // 🔑 Mantenemos auth.protect() pero verificamos la metadata del usuario
-    await auth.protect((has) => {
-      // Si la metadata aún no está configurada, permitimos pasar si está autenticado
-      // o verificamos la presencia del rol en publicMetadata
-      return true
-    })
-
-    // Leemos la sesión
     const authObj = await auth()
+
+    // 1. Si no hay sesión iniciada -> Sign In
+    if (!authObj.userId) {
+      return authObj.redirectToSignIn()
+    }
+
     const sessionClaims = authObj.sessionClaims as any
 
-    // Extraemos el rol soportando múltiples estructuras
-    const publicMeta = sessionClaims?.publicMetadata || sessionClaims?.public_metadata || {}
-    const rawRole = publicMeta?.role || authObj.sessionClaims?.role
+    // 2. Intentar leer desde las cookies JWT
+    let userRole =
+      sessionClaims?.publicMetadata?.role ||
+      sessionClaims?.public_metadata?.role ||
+      sessionClaims?.metadata?.role ||
+      ""
 
-    // Roles permitidos para el staff
-    const allowedRoles = ["ADMIN", "MANAGER", "CASHIER", "STAFF", "SUPERADMIN", "admin"]
+    // 3. 🔑 RESCATE: Si la cookie no trae el rol, consultar directamente a la API de Clerk
+    if (!userRole && authObj.userId) {
+      try {
+        const client = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
+        const user = await client.users.getUser(authObj.userId)
+        userRole = (user.publicMetadata as any)?.role || ""
+      } catch (err) {
+        console.error("Error al consultar usuario en Clerk desde middleware:", err)
+      }
+    }
 
-    // Si tiene un rol registrado de staff, se le permite ingresar
-    const hasStaffRole = typeof rawRole === "string" && allowedRoles.includes(rawRole)
+    const normalizedRole = typeof userRole === "string" ? userRole.trim() : ""
+    const isStaffAuthorized = normalizedRole !== "" && ALLOWED_STAFF_ROLES.includes(normalizedRole)
 
-    // 🚨 REGLE DE ACCESO: Si el usuario NO tiene un rol de staff en su metadata, se le deniega el ingreso
-    if (rawRole && !hasStaffRole && rawRole === "CUSTOMER") {
+    // 4. Si tras consultar la API de Clerk sigue sin tener rol de Staff -> Redirigir a reserva
+    if (!isStaffAuthorized) {
       const redirectUrl = new URL("/reserva", req.url)
-      redirectUrl.searchParams.set("error", "unauthorized")
+      redirectUrl.searchParams.set("error", "unauthorized_client")
       return NextResponse.redirect(redirectUrl)
     }
   }
