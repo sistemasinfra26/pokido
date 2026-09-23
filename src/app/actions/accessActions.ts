@@ -2,7 +2,7 @@
 
 import { prisma } from "@/lib/prisma"
 import { revalidatePath } from "next/cache"
-import { WristbandStatus, TicketStatus } from "@prisma/client"
+import { WristbandStatus, TicketStatus, OrderStatus } from "@prisma/client" // 'OrderStatus' agregado aquí
 
 export async function getActiveParkChildren() {
     try {
@@ -11,11 +11,26 @@ export async function getActiveParkChildren() {
         const activeTickets = await prisma.ticket.findMany({
             where: {
                 status: TicketStatus.ACTIVE,
+                // Filtramos para mostrar únicamente las órdenes confirmadas/pagadas
+                order: {
+                    status: OrderStatus.COMPLETED,
+                },
             },
             include: {
                 minor: true,
                 customer: true,
                 ticketType: true,
+                order: {
+                    select: {
+                        channel: true,
+                        status: true,
+                        payments: {
+                            select: {
+                                method: true,
+                            },
+                        },
+                    },
+                },
             },
             orderBy: {
                 createdAt: "desc",
@@ -53,11 +68,15 @@ export async function getActiveParkChildren() {
 
             const code = ticket.qrCode && ticket.qrCode.trim() !== "" ? ticket.qrCode.trim() : "SIN-PULSERA"
 
+            const orderChannel = ticket.order?.channel || "POS"
+            const orderStatus = ticket.order?.status || "COMPLETED"
+            const paymentMethod = ticket.order?.payments?.[0]?.method || (orderChannel === "WEB" ? "MERCADOPAGO" : "EFECTIVO")
+
             return {
                 id: minor?.id || ticket.id,
                 wristbandCode: code,
                 ticketId: ticket.id,
-                customerId: customer?.id || "", // 👈 INCLUIDO: ID real del tutor para evitar error de FK en Order
+                customerId: customer?.id || "",
                 minorName: minor?.fullName || "Menor no registrado",
                 age: minor?.birthDate ? new Date().getFullYear() - new Date(minor.birthDate).getFullYear() : 0,
                 medicalNotes: minor?.medicalNotes || undefined,
@@ -71,6 +90,10 @@ export async function getActiveParkChildren() {
                 durationMinutes: ticketType?.durationMinutes || 60,
                 rawStartTime: startTime.toISOString(),
                 rawEndTime: endTime.toISOString(),
+
+                channel: orderChannel === "WEB" ? "WEB" : "POS",
+                orderStatus: orderStatus,
+                paymentMethod: paymentMethod,
             }
         })
 

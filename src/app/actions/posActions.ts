@@ -1,7 +1,7 @@
 "use server"
 
 import { prisma } from "@/lib/prisma"
-import { PaymentMethod, WristbandStatus, TicketStatus } from "@prisma/client"
+import { PaymentMethod, WristbandStatus, TicketStatus, OrderStatus } from "@prisma/client"
 import { revalidatePath } from "next/cache"
 
 export interface CartItemInput {
@@ -90,7 +90,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                 }
             }
 
-            // 3. CREAR ORDEN
+            // 3. CREAR ORDEN CON STATUS COMPLETED
             const order = await tx.order.create({
                 data: {
                     orderNumber,
@@ -99,7 +99,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     shiftId: cashShiftId,
                     subtotal: totalAmount,
                     total: totalAmount,
-                    status: "COMPLETED",
+                    status: OrderStatus.COMPLETED,
                 },
             })
 
@@ -185,7 +185,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     },
                 })
 
-                // 5. SI ES RECARGO: LIBERA LA PULSERA Y CIERRA EL TICKET ANTERIOR
+                // 5. REGISTRAR O LIBERAR PULSERAS SI APLICA
                 if (isOvertimePenalty) {
                     const originalTicket = await tx.ticket.findFirst({
                         where: {
@@ -200,9 +200,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     if (originalTicket) {
                         await tx.ticket.update({
                             where: { id: originalTicket.id },
-                            data: {
-                                status: TicketStatus.USED,
-                            },
+                            data: { status: TicketStatus.USED },
                         })
                     }
 
@@ -222,7 +220,6 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     }
                 }
 
-                // SI ES COMPRA DE PASE NUEVO: VINCULA LA PULSERA
                 if (!isOvertimePenalty && item.wristbandCode && item.wristbandCode !== "RECARGO" && item.wristbandCode !== "REC-EXCESO") {
                     await tx.wristband.upsert({
                         where: { code: item.wristbandCode },
@@ -250,7 +247,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
                     minorName: minor.fullName,
                     durationMinutes: item.durationMinutes,
                     wristbandCode: item.wristbandCode,
-                    ticketTypeId: item.ticketTypeId, // 👈 Identificador clave enviado al cliente
+                    ticketTypeId: item.ticketTypeId,
                 })
             }
 
@@ -291,6 +288,7 @@ export async function processPosSale(data: CreatePosOrderInput) {
     }
 }
 
+// 🔑 OBTENER ÓRDENES RECIENTES IDENTIFICANDO ESTADO WEB PENDING vs COMPLETED
 export async function getRecentOrders(limit: number = 10) {
     try {
         const orders = await prisma.order.findMany({
@@ -311,8 +309,10 @@ export async function getRecentOrders(limit: number = 10) {
         const formattedOrders = orders.map((o) => ({
             orderId: o.id,
             orderNumber: o.orderNumber || `ORD-${o.id.slice(-4)}`,
+            status: o.status, // 🔑 Enviamos el estado real de la orden (COMPLETED, PENDING, CANCELLED)
+            channel: o.channel,
             total: Number(o.total),
-            paymentMethod: o.payments[0]?.method || "EFECTIVO",
+            paymentMethod: o.payments[0]?.method || (o.channel === "WEB" ? "MERCADOPAGO" : "EFECTIVO"),
             createdAt: o.createdAt.toISOString(),
             customerName: o.customer?.fullName || "Cliente Mostrador",
             customerDni: o.customer?.dni || "S/D",
@@ -339,7 +339,6 @@ export async function findTicketByWristbandCode(wristbandCode: string) {
     try {
         if (!wristbandCode) return { success: false, error: "Código de pulsera no ingresado" }
 
-        // Buscamos el ticket activo o consumido vinculado al código
         const ticket = await prisma.ticket.findFirst({
             where: {
                 OR: [
@@ -362,15 +361,12 @@ export async function findTicketByWristbandCode(wristbandCode: string) {
         const now = new Date()
         const endTime = ticket.endTime ? new Date(ticket.endTime) : now
 
-        // Calculamos los minutos de exceso
         const diffMs = now.getTime() - endTime.getTime()
         const overtimeMinutes = Math.max(0, Math.ceil(diffMs / 60000))
 
-        // Regla de cálculo del recargo (ej: $2.000 cada 15 min o tarifa fija por exceso)
-        // Puedes adaptar esta tarifa según el tarifario del parque
         const ratePer15Min = 2500
         const periods = Math.max(1, Math.ceil(overtimeMinutes / 15))
-        const penaltyFee = overtimeMinutes > 0 ? periods * ratePer15Min : 3000 // Tarifa base mínima
+        const penaltyFee = overtimeMinutes > 0 ? periods * ratePer15Min : 3000
 
         return {
             success: true,

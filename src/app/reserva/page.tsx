@@ -5,10 +5,14 @@ import { getPublicSlotAvailability, createOnlineOrder, findCustomerByDni, SlotSt
 import { getTicketTypes } from "@/app/actions/ticketTypeActions"
 import { createMercadoPagoPreference } from "@/app/actions/checkoutActions"
 
+// 🔑 FUNCIONES AUXILIARES DE VALIDACIÓN DEDICADAS
+const validateEmail = (email: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+const validateFullName = (name: string) => /^[a-zA-ZáéíóúÁÉÍÓÚñÑ]+(\s+[a-zA-ZáéíóúÁÉÍÓÚñÑ]+)+$/.test(name.trim()) // Al menos Nombre + Apellido
+const validatePhone = (phone: string) => phone.replace(/\D/g, "").length >= 8
+const validateDni = (dni: string) => dni.trim().length >= 7
+
 export default function WebBookingPage() {
     const [step, setStep] = useState<1 | 2 | 3>(1)
-
-    // Referencia para abrir el selector nativo al tocar el ícono
     const dateInputRef = useRef<HTMLInputElement>(null)
 
     // Paso 1: Turno y Fecha
@@ -17,7 +21,7 @@ export default function WebBookingPage() {
     const [selectedSlot, setSelectedSlot] = useState<string | null>(null)
     const [loadingSlots, setLoadingSlots] = useState(false)
 
-    // Paso 2: Datos del Titular / Mayor de Edad / Tutor
+    // Paso 2: Datos del Titular
     const [ticketTypes, setTicketTypes] = useState<any[]>([])
     const [customerDni, setCustomerDni] = useState("")
     const [customerName, setCustomerName] = useState("")
@@ -27,14 +31,14 @@ export default function WebBookingPage() {
     const [searchingCustomer, setSearchingCustomer] = useState(false)
     const [signedWaiver, setSignedWaiver] = useState(false)
 
-    // Modalidad: Define si el titular jugará como participante activo (Mayor de 18+)
     const [isAdultParticipant, setIsAdultParticipant] = useState(false)
-
     const [minors, setMinors] = useState<Array<{ fullName: string; age: string; ticketTypeId: string; price: number }>>([])
     const [processing, setLoadingProcessing] = useState(false)
     const [completedOrder, setCompletedOrder] = useState<any>(null)
 
-    // Cargar tarifas registradas al montar
+    // 🔑 ESTADO PARA MANEJO DE ERRORES DE FORMULARIO
+    const [formErrors, setFormErrors] = useState<Record<string, string>>({})
+
     useEffect(() => {
         async function loadInitialData() {
             const tRes = await getTicketTypes()
@@ -48,7 +52,6 @@ export default function WebBookingPage() {
         loadInitialData()
     }, [])
 
-    // Cargar disponibilidad al modificar fecha
     useEffect(() => {
         async function fetchAvailability() {
             setLoadingSlots(true)
@@ -61,7 +64,6 @@ export default function WebBookingPage() {
         fetchAvailability()
     }, [dateStr])
 
-    // Transformar YYYY-MM-DD a DD/MM/YYYY
     const formatFormattedDate = (isoDate: string) => {
         if (!isoDate) return ""
         const [year, month, day] = isoDate.split("-")
@@ -78,7 +80,6 @@ export default function WebBookingPage() {
         }
     }
 
-    // BÚSQUEDA AUTOMÁTICA DE CLIENTE
     const handleDniBlur = async () => {
         if (!customerDni.trim()) return
 
@@ -93,7 +94,6 @@ export default function WebBookingPage() {
         }
     }
 
-    // Estructuración de los participantes finales
     const getFinalParticipants = () => {
         if (isAdultParticipant) {
             const defaultType = ticketTypes[0]
@@ -137,9 +137,57 @@ export default function WebBookingPage() {
         setMinors(minors.filter((_, i) => i !== idx))
     }
 
-    // INTEGRACIÓN CON MERCADO PAGO
+    // 🔑 SISTEMA COMPLETO DE VALIDACIÓN
+    const validateForm = (): boolean => {
+        const errors: Record<string, string> = {}
+
+        if (!validateDni(customerDni)) {
+            errors.customerDni = "DNI / RUT inválido (mínimo 7 caracteres)."
+        }
+
+        if (!validateFullName(customerName)) {
+            errors.customerName = "Ingresa nombre y apellido completo (ej. Carlos Pérez)."
+        }
+
+        if (!validatePhone(customerPhone)) {
+            errors.customerPhone = "Ingresa un número de teléfono válido (mín. 8 dígitos)."
+        }
+
+        if (!validateEmail(customerEmail)) {
+            errors.customerEmail = "Ingresa un correo electrónico válido (ejemplo@gmail.com)."
+        }
+
+        if (isAdultParticipant) {
+            const ageNum = Number(customerAge)
+            if (isNaN(ageNum) || ageNum < 18) {
+                errors.customerAge = "El titular debe ser mayor de 18 años."
+            }
+        } else {
+            minors.forEach((m, idx) => {
+                if (!validateFullName(m.fullName)) {
+                    errors[`minorName_${idx}`] = "Ingresa nombre y apellido del niño/a."
+                }
+                const ageNum = Number(m.age)
+                if (isNaN(ageNum) || ageNum < 1 || ageNum > 17) {
+                    errors[`minorAge_${idx}`] = "La edad debe estar entre 1 y 17 años."
+                }
+            })
+        }
+
+        if (!signedWaiver) {
+            errors.signedWaiver = "Debes aceptar el deslinde de responsabilidad para continuar."
+        }
+
+        setFormErrors(errors)
+        return Object.keys(errors).length === 0
+    }
+
     const handleConfirmBooking = async () => {
         if (!selectedSlot) return
+
+        // 🔑 EJECUTA LA VALIDACIÓN ANTES DE ENVIAR
+        if (!validateForm()) return
+
         setLoadingProcessing(true)
 
         const formattedParticipants = getFinalParticipants()
@@ -277,7 +325,6 @@ export default function WebBookingPage() {
                             </button>
                         </div>
 
-                        {/* TOGGLE MAYOR DE EDAD DIRECTO */}
                         <div className="p-3.5 bg-slate-900/90 rounded-2xl border border-slate-700 flex items-center justify-between gap-3">
                             <span className="text-xs font-bold text-slate-300">
                                 ¿La entrada es para un usuario mayor de 18 años (sin tutor)?
@@ -295,6 +342,7 @@ export default function WebBookingPage() {
                         </div>
 
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                            {/* DNI */}
                             <div>
                                 <div className="flex justify-between items-center mb-1">
                                     <label className="text-xs font-bold text-slate-400 block">DNI / RUT Titular *</label>
@@ -305,23 +353,32 @@ export default function WebBookingPage() {
                                     placeholder="Ej. 18234567-K"
                                     value={customerDni}
                                     onBlur={handleDniBlur}
-                                    onChange={(e) => setCustomerDni(e.target.value)}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-pokido-cyan"
+                                    onChange={(e) => {
+                                        setCustomerDni(e.target.value)
+                                        setFormErrors((prev) => ({ ...prev, customerDni: "" }))
+                                    }}
+                                    className={`w-full bg-slate-900 border rounded-xl p-3 text-xs font-bold text-white focus:outline-none ${formErrors.customerDni ? "border-rose-500" : "border-slate-700 focus:ring-2 focus:ring-pokido-cyan"}`}
                                 />
+                                {formErrors.customerDni && <span className="text-[10px] text-rose-400 font-bold mt-1 block">{formErrors.customerDni}</span>}
                             </div>
 
+                            {/* NOMBRE */}
                             <div>
-                                <label className="text-xs font-bold text-slate-400 mb-1 block">Nombre Completo *</label>
+                                <label className="text-xs font-bold text-slate-400 mb-1 block">Nombre y Apellido *</label>
                                 <input
                                     type="text"
                                     placeholder="Ej. Carlos Pérez"
                                     value={customerName}
-                                    onChange={(e) => setCustomerName(e.target.value)}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs font-medium text-white focus:outline-none focus:ring-2 focus:ring-pokido-cyan"
+                                    onChange={(e) => {
+                                        setCustomerName(e.target.value)
+                                        setFormErrors((prev) => ({ ...prev, customerName: "" }))
+                                    }}
+                                    className={`w-full bg-slate-900 border rounded-xl p-3 text-xs font-medium text-white focus:outline-none ${formErrors.customerName ? "border-rose-500" : "border-slate-700 focus:ring-2 focus:ring-pokido-cyan"}`}
                                 />
+                                {formErrors.customerName && <span className="text-[10px] text-rose-400 font-bold mt-1 block">{formErrors.customerName}</span>}
                             </div>
 
-                            {/* CAMPO DE EDAD DEL TITULAR (SI ES MAYOR DE EDAD PARTICIPANTE) */}
+                            {/* EDAD ADULTO */}
                             {isAdultParticipant && (
                                 <div>
                                     <label className="text-xs font-bold text-slate-400 mb-1 block">Edad del Titular *</label>
@@ -331,36 +388,50 @@ export default function WebBookingPage() {
                                         max="99"
                                         placeholder="Ej. 20"
                                         value={customerAge}
-                                        onChange={(e) => setCustomerAge(e.target.value)}
-                                        className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs font-bold text-white focus:outline-none focus:ring-2 focus:ring-pokido-cyan"
+                                        onChange={(e) => {
+                                            setCustomerAge(e.target.value)
+                                            setFormErrors((prev) => ({ ...prev, customerAge: "" }))
+                                        }}
+                                        className={`w-full bg-slate-900 border rounded-xl p-3 text-xs font-bold text-white focus:outline-none ${formErrors.customerAge ? "border-rose-500" : "border-slate-700 focus:ring-2 focus:ring-pokido-cyan"}`}
                                     />
+                                    {formErrors.customerAge && <span className="text-[10px] text-rose-400 font-bold mt-1 block">{formErrors.customerAge}</span>}
                                 </div>
                             )}
 
+                            {/* TELÉFONO */}
                             <div>
                                 <label className="text-xs font-bold text-slate-400 mb-1 block">Teléfono Móvil *</label>
                                 <input
                                     type="text"
                                     placeholder="+56 9 1234 5678"
                                     value={customerPhone}
-                                    onChange={(e) => setCustomerPhone(e.target.value)}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs font-medium text-white focus:outline-none focus:ring-2 focus:ring-pokido-cyan"
+                                    onChange={(e) => {
+                                        setCustomerPhone(e.target.value)
+                                        setFormErrors((prev) => ({ ...prev, customerPhone: "" }))
+                                    }}
+                                    className={`w-full bg-slate-900 border rounded-xl p-3 text-xs font-medium text-white focus:outline-none ${formErrors.customerPhone ? "border-rose-500" : "border-slate-700 focus:ring-2 focus:ring-pokido-cyan"}`}
                                 />
+                                {formErrors.customerPhone && <span className="text-[10px] text-rose-400 font-bold mt-1 block">{formErrors.customerPhone}</span>}
                             </div>
 
+                            {/* EMAIL */}
                             <div className={isAdultParticipant ? "sm:col-span-2" : ""}>
                                 <label className="text-xs font-bold text-slate-400 mb-1 block">Email (Recibirás tu QR) *</label>
                                 <input
                                     type="email"
                                     placeholder="carlos@gmail.com"
                                     value={customerEmail}
-                                    onChange={(e) => setCustomerEmail(e.target.value)}
-                                    className="w-full bg-slate-900 border border-slate-700 rounded-xl p-3 text-xs font-medium text-white focus:outline-none focus:ring-2 focus:ring-pokido-cyan"
+                                    onChange={(e) => {
+                                        setCustomerEmail(e.target.value)
+                                        setFormErrors((prev) => ({ ...prev, customerEmail: "" }))
+                                    }}
+                                    className={`w-full bg-slate-900 border rounded-xl p-3 text-xs font-medium text-white focus:outline-none ${formErrors.customerEmail ? "border-rose-500" : "border-slate-700 focus:ring-2 focus:ring-pokido-cyan"}`}
                                 />
+                                {formErrors.customerEmail && <span className="text-[10px] text-rose-400 font-bold mt-1 block">{formErrors.customerEmail}</span>}
                             </div>
                         </div>
 
-                        {/* LISTADO DE NIÑOS (SÓLO SI ES ACOMPAÑANTE / TUTOR) */}
+                        {/* LISTADO DE NIÑOS */}
                         {!isAdultParticipant && (
                             <div className="space-y-3 pt-4 border-t border-slate-700">
                                 <div className="flex justify-between items-center">
@@ -387,9 +458,8 @@ export default function WebBookingPage() {
                                             )}
                                         </div>
                                         <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
-                                            {/* NOMBRE DEL NIÑO */}
                                             <div className="sm:col-span-2">
-                                                <label className="text-[10px] font-bold text-slate-400 block mb-1">Nombre del Niño/a *</label>
+                                                <label className="text-[10px] font-bold text-slate-400 block mb-1">Nombre y Apellido del Niño/a *</label>
                                                 <input
                                                     type="text"
                                                     placeholder="Ej. Mateo Pérez"
@@ -398,12 +468,13 @@ export default function WebBookingPage() {
                                                         const updated = [...minors]
                                                         updated[idx].fullName = e.target.value
                                                         setMinors(updated)
+                                                        setFormErrors((prev) => ({ ...prev, [`minorName_${idx}`]: "" }))
                                                     }}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:ring-2 focus:ring-pokido-cyan"
+                                                    className={`w-full bg-slate-800 border rounded-xl p-2.5 text-xs text-white focus:outline-none ${formErrors[`minorName_${idx}`] ? "border-rose-500" : "border-slate-700 focus:ring-2 focus:ring-pokido-cyan"}`}
                                                 />
+                                                {formErrors[`minorName_${idx}`] && <span className="text-[10px] text-rose-400 font-bold mt-0.5 block">{formErrors[`minorName_${idx}`]}</span>}
                                             </div>
 
-                                            {/* 🔑 CAMPO EDAD CON ETIQUETA CLARA */}
                                             <div>
                                                 <label className="text-[10px] font-bold text-slate-400 block mb-1">Edad *</label>
                                                 <input
@@ -416,12 +487,13 @@ export default function WebBookingPage() {
                                                         const updated = [...minors]
                                                         updated[idx].age = e.target.value
                                                         setMinors(updated)
+                                                        setFormErrors((prev) => ({ ...prev, [`minorAge_${idx}`]: "" }))
                                                     }}
-                                                    className="w-full bg-slate-800 border border-slate-700 rounded-xl p-2.5 text-xs text-white font-bold text-center focus:outline-none focus:ring-2 focus:ring-pokido-cyan"
+                                                    className={`w-full bg-slate-800 border rounded-xl p-2.5 text-xs text-white font-bold text-center focus:outline-none ${formErrors[`minorAge_${idx}`] ? "border-rose-500" : "border-slate-700 focus:ring-2 focus:ring-pokido-cyan"}`}
                                                 />
+                                                {formErrors[`minorAge_${idx}`] && <span className="text-[10px] text-rose-400 font-bold mt-0.5 block">{formErrors[`minorAge_${idx}`]}</span>}
                                             </div>
 
-                                            {/* TIPO DE TICKET */}
                                             <div>
                                                 <label className="text-[10px] font-bold text-slate-400 block mb-1">Tipo de Entrada *</label>
                                                 <select
@@ -448,19 +520,23 @@ export default function WebBookingPage() {
                             </div>
                         )}
 
-                        {/* WAIVER / DESLINDE */}
+                        {/* WAIVER */}
                         <div className="p-4 bg-slate-900/80 rounded-2xl border border-slate-700/80 space-y-2">
                             <label className="flex items-start gap-3 cursor-pointer">
                                 <input
                                     type="checkbox"
                                     checked={signedWaiver}
-                                    onChange={(e) => setSignedWaiver(e.target.checked)}
+                                    onChange={(e) => {
+                                        setSignedWaiver(e.target.checked)
+                                        setFormErrors((prev) => ({ ...prev, signedWaiver: "" }))
+                                    }}
                                     className="mt-1 w-4 h-4 rounded text-pokido-cyan focus:ring-pokido-cyan cursor-pointer"
                                 />
                                 <span className="text-xs text-slate-300 leading-relaxed font-medium">
                                     Acepto el <strong className="text-white">Reglamento de Seguridad y Deslinde de Responsabilidad</strong> de POKIDOPARK para mí o los menores a mi cargo.
                                 </span>
                             </label>
+                            {formErrors.signedWaiver && <span className="text-[10px] text-rose-400 font-bold block">{formErrors.signedWaiver}</span>}
                         </div>
 
                         {/* RESUMEN Y PAGO */}
@@ -471,14 +547,7 @@ export default function WebBookingPage() {
                             </div>
                             <button
                                 type="button"
-                                disabled={
-                                    processing ||
-                                    !signedWaiver ||
-                                    !customerDni ||
-                                    !customerName ||
-                                    (isAdultParticipant && (!customerAge || Number(customerAge) < 18)) ||
-                                    (!isAdultParticipant && minors.some((m) => !m.fullName || !m.age))
-                                }
+                                disabled={processing}
                                 onClick={handleConfirmBooking}
                                 className="bg-pokido-green hover:bg-pokido-green/90 disabled:opacity-40 text-slate-950 font-black px-6 py-3.5 rounded-2xl transition text-xs shadow-lg shadow-pokido-green/10 cursor-pointer"
                             >

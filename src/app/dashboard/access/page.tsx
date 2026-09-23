@@ -36,7 +36,8 @@ export default function AccessControlPage() {
     setLoading(false)
 
     if (res.success && res.data) {
-      setChildrenList(res.data)
+      // SOLUCIÓN: Type Cast explícito para alinearlo con la interfaz ActiveChild[]
+      setChildrenList(res.data as unknown as ActiveChild[])
       if (res.counts) {
         setCounts(res.counts)
       }
@@ -47,7 +48,7 @@ export default function AccessControlPage() {
     loadData()
   }, [])
 
-  // 🔑 ESCÁNER INTELIGENTE ÚNICO (Sidebar): Procesa búsquedas de Orden Web o QR
+  //  ESCÁNER INTELIGENTE ÚNICO (Sidebar): Procesa búsquedas de Orden Web o QR
   const handleSmartSearch = async () => {
     const clean = searchQuery.trim().toUpperCase()
     if (!clean) return

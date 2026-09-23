@@ -33,21 +33,18 @@ const ALL_SLOTS = [
     "14:00", "14:30", "15:00", "15:30",
     "16:00", "16:30", "17:00", "17:30",
     "18:00", "18:30", "19:00", "19:30",
-    "20:00", "20:30", "21:00", "21:30" // 👈 Agregados turnos nocturnos
+    "20:00", "20:30", "21:00", "21:30"
 ]
 
-// Configura la zona horaria local del parque
-const TIMEZONE = "America/Santiago" // O "America/Argentina/Buenos_Aires"
+const TIMEZONE = "America/Santiago"
 
 export async function getPublicSlotAvailability(dateStr: string) {
     try {
         const now = new Date()
 
-        // 🔑 Obtener la fecha local formateada YYYY-MM-DD
         const localDateStr = now.toLocaleDateString("en-CA", { timeZone: TIMEZONE })
         const isToday = dateStr === localDateStr
 
-        // 🔑 Obtener la hora local actual en minutos
         const localTimeString = now.toLocaleTimeString("en-US", {
             timeZone: TIMEZONE,
             hour12: false,
@@ -63,11 +60,27 @@ export async function getPublicSlotAvailability(dateStr: string) {
         const endOfDay = new Date(selectedDate)
         endOfDay.setHours(23, 59, 59, 999)
 
-        // A. Consultar tickets vendidos para la fecha
+        // 🔑 Tiempo límite de 15 minutos para carritos PENDING en Mercado Pago
+        const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000)
+
+        // A. Consultar tickets que pertenezcan a órdenes COMPLETADAS o PENDIENTES con menos de 15 minutos
         const tickets = await prisma.ticket.findMany({
             where: {
                 validDate: { gte: startOfDay, lte: endOfDay },
-                status: { in: [TicketStatus.ACTIVE, TicketStatus.IN_USE] },
+                OR: [
+                    // Tickets de órdenes pagadas activas/en uso
+                    {
+                        order: { status: OrderStatus.COMPLETED },
+                        status: { in: [TicketStatus.ACTIVE, TicketStatus.IN_USE] }
+                    },
+                    // Tickets de reservas Web pendientes pero AÚN NO expiradas (reserva temporal de 15 min)
+                    {
+                        order: {
+                            status: OrderStatus.PENDING,
+                            createdAt: { gte: fifteenMinutesAgo }
+                        }
+                    }
+                ]
             },
             select: {
                 startTime: true,
@@ -75,7 +88,7 @@ export async function getPublicSlotAvailability(dateStr: string) {
             },
         })
 
-        // B. Consultar reservas de cumpleaños para la fecha
+        // B. Consultar reservas de cumpleaños
         const bookings = await prisma.booking.findMany({
             where: {
                 date: { gte: startOfDay, lte: endOfDay },
@@ -90,7 +103,6 @@ export async function getPublicSlotAvailability(dateStr: string) {
 
         const occupancyMap: Record<string, number> = {}
 
-        // Mapeo pases individuales
         tickets.forEach((t) => {
             if (t.startTime) {
                 const start = new Date(t.startTime)
@@ -109,7 +121,6 @@ export async function getPublicSlotAvailability(dateStr: string) {
             }
         })
 
-        // Mapeo cumpleaños
         bookings.forEach((b) => {
             if (b.startTime && b.endTime) {
                 const [startH, startM] = b.startTime.split(":").map(Number)
@@ -129,12 +140,10 @@ export async function getPublicSlotAvailability(dateStr: string) {
             }
         })
 
-        // C. Anular turnos pasados según hora LOCAL
         const slots: SlotStatus[] = ALL_SLOTS.map((slot) => {
             const [h, m] = slot.split(":").map(Number)
             const slotMins = h * 60 + m
 
-            // Solo deshabilitar si es HOY y la hora local ya transcurrió
             const isPast = isToday && slotMins <= currentMins
             const taken = occupancyMap[slot] || 0
             const available = Math.max(0, PARK_TOTAL_MAX_CAPACITY - taken)
@@ -158,7 +167,6 @@ export async function getPublicSlotAvailability(dateStr: string) {
     }
 }
 
-// 2. Procesar reserva e integración previa a Mercado Pago
 export async function createOnlineOrder(input: OnlineBookingInput) {
     try {
         const { customerDni, customerName, customerPhone, customerEmail, dateStr, timeSlot, signedWaiver, minors } = input
@@ -174,7 +182,6 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
         const cleanDni = customerDni.replace(/[^0-9kK]/g, "").trim()
         const cleanEmail = customerEmail.trim().toLowerCase()
 
-        // A. Buscar si el cliente ya existe por DNI o Email para no duplicarlo
         let customer = await prisma.customer.findFirst({
             where: {
                 OR: [
@@ -194,7 +201,6 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
                 },
             })
         } else {
-            // Actualizar teléfono y nombre si sufrió modificaciones
             await prisma.customer.update({
                 where: { id: customer.id },
                 data: {
@@ -205,7 +211,6 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
             })
         }
 
-        // B. Registrar Waiver firmado
         const expiresAt = new Date()
         expiresAt.setFullYear(expiresAt.getFullYear() + 1)
 
@@ -218,7 +223,6 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
             },
         })
 
-        // C. Crear la Orden de Compra Web en estado PENDING
         const totalAmount = minors.reduce((acc, m) => acc + m.price, 0)
         const orderNumber = `WEB-${Date.now().toString().slice(-6)}`
 
@@ -229,11 +233,10 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
                 customerId: customer.id,
                 subtotal: totalAmount,
                 total: totalAmount,
-                status: OrderStatus.PENDING,
+                status: OrderStatus.PENDING, // 🔑 Nace PENDING
             },
         })
 
-        // D. Crear Menores y Generar Tickets Asociados
         const [hours, minutes] = timeSlot.split(":").map(Number)
         const ticketDate = new Date(`${dateStr}T00:00:00`)
 
@@ -263,9 +266,9 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
 
             const duration = minorItem.ticketTypeId.includes("120") ? 120 : minorItem.ticketTypeId.includes("90") ? 90 : 60
             const endTime = new Date(startTime.getTime() + duration * 60000)
-
             const qrCode = `QR-${orderNumber}-${Math.random().toString(36).substring(2, 7).toUpperCase()}`
 
+            // 🔑 CAMBIO CLAVE: Los tickets nacen como CANCELLED o PENDING para no ser activos sin pago
             await prisma.ticket.create({
                 data: {
                     orderId: newOrder.id,
@@ -277,7 +280,7 @@ export async function createOnlineOrder(input: OnlineBookingInput) {
                     startTime,
                     endTime,
                     qrCode,
-                    status: TicketStatus.ACTIVE,
+                    status: TicketStatus.CANCELLED, // 🔑 Se activará a ACTIVE únicamente desde el Webhook de Mercado Pago
                 },
             })
         }

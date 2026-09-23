@@ -1,5 +1,6 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { getWristbandColorForTime, WRISTBAND_COLORS } from "@/lib/wristbandLogic"
 import { PARK_TOTAL_MAX_CAPACITY } from "@/lib/capacityLogic"
@@ -22,6 +23,12 @@ const timeSlotsList = [
     "20:00", "20:30", "21:00", "21:30",
 ]
 
+// 🔑 Convierte "HH:MM" a minutos desde medianoche para comparación exacta
+function timeToMinutes(timeStr: string): number {
+    const [hours, minutes] = timeStr.split(":").map(Number)
+    return hours * 60 + minutes
+}
+
 interface TimeSlotSchedulerProps {
     onSelectSlot?: (timeStr: string, duration: number, colorId: number) => void
     isInteractive?: boolean
@@ -36,6 +43,19 @@ export function TimeSlotScheduler({
     occupancyData = {},
 }: TimeSlotSchedulerProps) {
     const router = useRouter()
+    const [currentMinutes, setCurrentMinutes] = useState<number>(0)
+
+    // 🔑 Mantiene la hora actual sincronizada cada minuto
+    useEffect(() => {
+        const updateCurrentTime = () => {
+            const now = new Date()
+            setCurrentMinutes(now.getHours() * 60 + now.getMinutes())
+        }
+
+        updateCurrentTime()
+        const interval = setInterval(updateCurrentTime, 60000) // Actualiza cada minuto
+        return () => clearInterval(interval)
+    }, [])
 
     const handleSlotClick = (timeStr: string, duration: number, colorId: number) => {
         if (!isInteractive) return
@@ -55,7 +75,7 @@ export function TimeSlotScheduler({
                         <span>🕒</span> Disponibilidad y Rotación de Pulseras
                     </h2>
                     <p className="text-xs text-slate-400 mt-0.5">
-                        Selecciona un bloque horario para emitir pases directamente en el POS
+                        Selecciona un bloque horario activo para emitir pases directamente en el POS
                     </p>
                 </div>
 
@@ -74,7 +94,7 @@ export function TimeSlotScheduler({
                 </div>
             </div>
 
-            {/* TABLA CON BARRAS DE CAPACIDAD Y ACCIÓN DIRECTA */}
+            {/* TABLA CON BARRAS DE CAPACIDAD Y BLOQUEO POR HORA PASADA */}
             <div className="overflow-x-auto max-h-96 overflow-y-auto rounded-2xl border border-slate-200">
                 <table className="w-full text-left text-xs border-collapse">
                     <thead className="sticky top-0 bg-slate-100 font-extrabold text-slate-700 uppercase tracking-wider z-10 border-b border-slate-200">
@@ -97,14 +117,31 @@ export function TimeSlotScheduler({
                             const percentage = Math.min(100, Math.round((booked / capacityPerSlot) * 100))
                             const isFull = booked >= capacityPerSlot
 
+                            // 🔑 Evaluamos si el turno ya pasó
+                            const slotMinutes = timeToMinutes(timeStr)
+                            const isPast = slotMinutes < currentMinutes
+
                             const prevTime = timeSlotsList[timeSlotsList.indexOf(timeStr) - 1]
                             const cExit = prevTime ? getWristbandColorForTime(prevTime, 30) : null
 
+                            const isDisabled = isFull || isPast
+
                             return (
-                                <tr key={timeStr} className="hover:bg-slate-50/80 transition">
+                                <tr
+                                    key={timeStr}
+                                    className={`transition ${isPast ? "bg-slate-50/50 opacity-60" : "hover:bg-slate-50/80"
+                                        }`}
+                                >
                                     {/* HORA */}
                                     <td className="py-3 px-4 font-black text-slate-900 bg-slate-50/50 whitespace-nowrap">
-                                        {timeStr} hs
+                                        <span className={isPast ? "line-through text-slate-400" : ""}>
+                                            {timeStr} hs
+                                        </span>
+                                        {isPast && (
+                                            <span className="ml-2 text-[9px] font-extrabold text-slate-400 bg-slate-200/60 px-1.5 py-0.5 rounded uppercase">
+                                                Finalizado
+                                            </span>
+                                        )}
                                     </td>
 
                                     {/* BARRA DE CAPACIDAD DINÁMICA */}
@@ -116,23 +153,27 @@ export function TimeSlotScheduler({
                                                 </span>
                                                 <span
                                                     className={
-                                                        isFull
-                                                            ? "text-pokido-red font-black"
-                                                            : percentage > 80
-                                                                ? "text-pokido-orange font-black"
-                                                                : "text-pokido-green font-black"
+                                                        isPast
+                                                            ? "text-slate-400 font-bold"
+                                                            : isFull
+                                                                ? "text-pokido-red font-black"
+                                                                : percentage > 80
+                                                                    ? "text-pokido-orange font-black"
+                                                                    : "text-pokido-green font-black"
                                                     }
                                                 >
-                                                    {isFull ? "COMPLETO" : `${capacityPerSlot - booked} libres`}
+                                                    {isPast ? "EXPIRADO" : isFull ? "COMPLETO" : `${capacityPerSlot - booked} libres`}
                                                 </span>
                                             </div>
                                             <div className="w-full bg-slate-100 h-2.5 rounded-full overflow-hidden border border-slate-200/80">
                                                 <div
-                                                    className={`h-full rounded-full transition-all duration-500 ${isFull
-                                                        ? "bg-pokido-red"
-                                                        : percentage > 80
-                                                            ? "bg-pokido-orange"
-                                                            : "bg-pokido-green"
+                                                    className={`h-full rounded-full transition-all duration-500 ${isPast
+                                                            ? "bg-slate-300"
+                                                            : isFull
+                                                                ? "bg-pokido-red"
+                                                                : percentage > 80
+                                                                    ? "bg-pokido-orange"
+                                                                    : "bg-pokido-green"
                                                         }`}
                                                     style={{ width: `${percentage}%` }}
                                                 />
@@ -144,15 +185,15 @@ export function TimeSlotScheduler({
                                     <td className="py-2 px-3 text-center">
                                         <button
                                             type="button"
-                                            disabled={isFull}
+                                            disabled={isDisabled}
                                             onClick={() => handleSlotClick(timeStr, 30, c30.id)}
                                             className={`w-full py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-2 border transition ${c30.badgeClass
-                                                } ${!isFull
+                                                } ${!isDisabled
                                                     ? "hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
-                                                    : "opacity-40 cursor-not-allowed"
+                                                    : "opacity-30 cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400"
                                                 }`}
                                         >
-                                            <span className={`w-3.5 h-3.5 rounded-full ${c30.bgClass} border border-black/10 shadow-sm`} />
+                                            <span className={`w-3.5 h-3.5 rounded-full ${c30.bgClass} border border-black/10 shadow-sm ${isPast ? "grayscale" : ""}`} />
                                         </button>
                                     </td>
 
@@ -160,15 +201,15 @@ export function TimeSlotScheduler({
                                     <td className="py-2 px-3 text-center">
                                         <button
                                             type="button"
-                                            disabled={isFull}
+                                            disabled={isDisabled}
                                             onClick={() => handleSlotClick(timeStr, 60, c60.id)}
                                             className={`w-full py-2 px-3 rounded-xl font-bold flex items-center justify-center gap-2 border transition ${c60.badgeClass
-                                                } ${!isFull
+                                                } ${!isDisabled
                                                     ? "hover:scale-105 active:scale-95 cursor-pointer shadow-sm"
-                                                    : "opacity-40 cursor-not-allowed"
+                                                    : "opacity-30 cursor-not-allowed bg-slate-100 border-slate-200 text-slate-400"
                                                 }`}
                                         >
-                                            <span className={`w-3.5 h-3.5 rounded-full ${c60.bgClass} border border-black/10 shadow-sm`} />
+                                            <span className={`w-3.5 h-3.5 rounded-full ${c60.bgClass} border border-black/10 shadow-sm ${isPast ? "grayscale" : ""}`} />
                                         </button>
                                     </td>
 
@@ -177,7 +218,7 @@ export function TimeSlotScheduler({
                                         {cExit ? (
                                             <div className="flex justify-center">
                                                 <span
-                                                    className={`w-6 h-6 rounded-full border shadow-sm inline-block ${cExit.bgClass} ${cExit.borderClass}`}
+                                                    className={`w-6 h-6 rounded-full border shadow-sm inline-block ${cExit.bgClass} ${cExit.borderClass} ${isPast ? "grayscale opacity-40" : ""}`}
                                                 />
                                             </div>
                                         ) : (

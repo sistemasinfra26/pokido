@@ -20,16 +20,22 @@ export interface ActiveChild {
     durationMinutes: number
     rawStartTime: string
     rawEndTime: string
+    // 🔑 NUEVAS PROPIEDADES DE CONTROL
+    channel?: "WEB" | "POS"
+    orderStatus?: "COMPLETED" | "PENDING" | "CANCELLED"
+    paymentMethod?: string
 }
 
 interface ActiveChildrenTableProps {
     childrenList: ActiveChild[]
     onCheckout?: (child: ActiveChild) => void
+    onExtend?: (child: ActiveChild) => void
 }
 
-export function ActiveChildrenTable({ childrenList = [], onCheckout }: ActiveChildrenTableProps) {
+export function ActiveChildrenTable({ childrenList = [], onCheckout, onExtend }: ActiveChildrenTableProps) {
     const [, setTick] = useState(0)
 
+    // Re-renderizar cada 10 segundos para actualizar tiempos en vivo
     useEffect(() => {
         const interval = setInterval(() => {
             setTick((prev) => prev + 1)
@@ -53,7 +59,7 @@ export function ActiveChildrenTable({ childrenList = [], onCheckout }: ActiveChi
                         <th className="py-4 px-6">Niño / Pulsera</th>
                         <th className="py-4 px-6">Tutor / Teléfono</th>
                         <th className="py-4 px-6">Turno Reservado / Color</th>
-                        <th className="py-4 px-6">Emisión en Caja</th>
+                        <th className="py-4 px-6">Emisión / Origen</th>
                         <th className="py-4 px-6">Estado del Pase</th>
                         <th className="py-4 px-6 text-right">Acciones</th>
                     </tr>
@@ -76,9 +82,11 @@ export function ActiveChildrenTable({ childrenList = [], onCheckout }: ActiveChi
                         const isPlaying = !isWaiting && !isExpired
 
                         const extraMinutes = isExpired ? Math.abs(minutesRemaining) : 0
-                        const extraCharge = extraMinutes > 0 ? Math.ceil(extraMinutes / 15) * 1500 : 0
+                        const extraCharge = extraMinutes > 0 ? Math.ceil(extraMinutes / 15) * 2500 : 0
 
                         const colorObj = getWristbandColorForTime(child.slotStartTime, child.durationMinutes)
+                        const isWeb = child.channel === "WEB"
+                        const isPendingWeb = child.orderStatus === "PENDING"
 
                         return (
                             <tr key={child.id} className="hover:bg-slate-50/80 transition">
@@ -89,7 +97,19 @@ export function ActiveChildrenTable({ childrenList = [], onCheckout }: ActiveChi
                                             {child.minorName?.charAt(0) || "N"}
                                         </div>
                                         <div>
-                                            <div className="font-bold text-slate-900 leading-tight">{child.minorName}</div>
+                                            <div className="font-bold text-slate-900 leading-tight flex items-center gap-2">
+                                                <span>{child.minorName}</span>
+                                                {/* BADGE DE CANAL DE VENTA */}
+                                                {isWeb ? (
+                                                    <span className="text-[9px] font-black bg-cyan-100 text-cyan-800 border border-cyan-300 px-1.5 py-0.2 rounded uppercase">
+                                                        🌐 WEB
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-[9px] font-black bg-slate-100 text-slate-600 border border-slate-200 px-1.5 py-0.2 rounded uppercase">
+                                                        💻 CAJA POS
+                                                    </span>
+                                                )}
+                                            </div>
                                             <div className="text-xs text-slate-400 font-mono font-bold mt-0.5">{child.wristbandCode}</div>
                                             {child.medicalNotes && (
                                                 <span className="inline-block mt-1 text-[10px] font-bold bg-pokido-orange/10 text-pokido-orange border border-pokido-orange/20 px-2 py-0.5 rounded">
@@ -124,10 +144,20 @@ export function ActiveChildrenTable({ childrenList = [], onCheckout }: ActiveChi
                                     </div>
                                 </td>
 
-                                {/* EMISIÓN EN CAJA */}
+                                {/* EMISIÓN EN CAJA / MERCADO PAGO */}
                                 <td className="py-4 px-6 whitespace-nowrap">
-                                    <div className="text-xs text-slate-500 font-semibold">
-                                        💳 Cobrado a las {child.purchaseTime} hs
+                                    <div className="space-y-0.5">
+                                        <div className="text-xs text-slate-600 font-bold">
+                                            {isWeb ? "💳 Mercado Pago" : `💳 ${child.paymentMethod || "Efectivo"}`}
+                                        </div>
+                                        <div className="text-[10px] text-slate-400 font-semibold">
+                                            Hora: {child.purchaseTime} hs
+                                        </div>
+                                        {isPendingWeb && (
+                                            <span className="inline-block text-[9px] font-extrabold bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded">
+                                                ⏳ Pago pendiente MP
+                                            </span>
+                                        )}
                                     </div>
                                 </td>
 
@@ -175,6 +205,7 @@ export function ActiveChildrenTable({ childrenList = [], onCheckout }: ActiveChi
                                     <div className="flex items-center justify-end gap-2">
                                         <button
                                             type="button"
+                                            onClick={() => onExtend && onExtend(child)}
                                             className="bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold px-3 py-2 rounded-xl transition cursor-pointer"
                                         >
                                             + Extender
