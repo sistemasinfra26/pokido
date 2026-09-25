@@ -34,21 +34,47 @@ export default clerkMiddleware(async (auth, req) => {
       sessionClaims?.metadata?.role ||
       ""
 
-    // 3. 🔑 RESCATE: Si la cookie no trae el rol, consultar directamente a la API de Clerk
+    // 3. 🔑 RESCATE Y AUTO-ASIGNACIÓN: Si la cookie no trae el rol, verificar Clerk API e Invitaciones
     if (!userRole && authObj.userId) {
       try {
         const client = createClerkClient({ secretKey: process.env.CLERK_SECRET_KEY })
         const user = await client.users.getUser(authObj.userId)
         userRole = (user.publicMetadata as any)?.role || ""
+
+        // 🔑 SI SIGUE SIN ROL: Revisar si existe una invitación vinculada a su email
+        if (!userRole) {
+          const userEmail = user.emailAddresses[0]?.emailAddress
+          if (userEmail) {
+            const invitations = await client.invitations.getInvitationList({
+              status: "pending",
+            })
+
+            const matchingInvitation = invitations.data.find(
+              (inv) => inv.emailAddress.toLowerCase() === userEmail.toLowerCase()
+            )
+
+            if (matchingInvitation && matchingInvitation.publicMetadata?.role) {
+              userRole = matchingInvitation.publicMetadata.role as string
+
+              // Asignar el rol al metadata del usuario permanentemente
+              await client.users.updateUserMetadata(authObj.userId, {
+                publicMetadata: {
+                  ...user.publicMetadata,
+                  role: userRole,
+                },
+              })
+            }
+          }
+        }
       } catch (err) {
-        console.error("Error al consultar usuario en Clerk desde middleware:", err)
+        console.error("Error al consultar o asignar rol en Clerk desde middleware:", err)
       }
     }
 
     const normalizedRole = typeof userRole === "string" ? userRole.trim() : ""
     const isStaffAuthorized = normalizedRole !== "" && ALLOWED_STAFF_ROLES.includes(normalizedRole)
 
-    // 4. Si tras consultar la API de Clerk sigue sin tener rol de Staff -> Redirigir a reserva
+    // 4. Si tras verificar invitaciones y metadata no tiene rol -> Redirigir a pantalla sin autorización
     if (!isStaffAuthorized) {
       const redirectUrl = new URL("/reserva", req.url)
       redirectUrl.searchParams.set("error", "unauthorized_client")
