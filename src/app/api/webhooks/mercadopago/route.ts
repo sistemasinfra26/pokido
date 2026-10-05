@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server"
 import { MercadoPagoConfig, Payment } from "mercadopago"
 import { prisma } from "@/lib/prisma"
-import { OrderStatus, PaymentStatus, PaymentMethod, TicketStatus } from "@prisma/client"
+import { OrderStatus, PaymentStatus, PaymentMethod, TicketStatus, BookingStatus } from "@prisma/client"
 import { sendTicketEmail } from "@/lib/email"
 
 // Inicializar el SDK de Mercado Pago con tu Access Token privado
@@ -48,14 +48,14 @@ export async function POST(request: Request) {
 
             // 4. Si el pago fue APROBADO por Mercado Pago
             if (paymentInfo.status === "approved") {
-                // 🔑 1. CONTROL DE IDEMPOTENCIA: Si la orden ya fue procesada, ignorar reintentos de MP
+                // 🔑 CONTROL DE IDEMPOTENCIA: Si la orden ya fue procesada, ignorar reintentos de MP
                 if (order.status === OrderStatus.COMPLETED) {
                     console.log(`[MP Webhook] Orden ${orderNumber} ya procesada anteriormente. Se omite duplicación.`)
                     return NextResponse.json({ received: true }, { status: 200 })
                 }
 
-                // 2. Transacción atómica en PostgreSQL
-                await prisma.$transaction([
+                // Definir las operaciones de la transacción atómica
+                const transactionOperations: any[] = [
                     // A. Actualizar estado de la orden a COMPLETED y guardar ID de pago
                     prisma.order.update({
                         where: { id: order.id },
@@ -65,7 +65,7 @@ export async function POST(request: Request) {
                         },
                     }),
 
-                    // B. Activar todos los Tickets asociados a esta orden
+                    // B. Activar todos los Tickets asociados a esta orden (si existen)
                     prisma.ticket.updateMany({
                         where: { orderId: order.id },
                         data: {
@@ -83,11 +83,27 @@ export async function POST(request: Request) {
                             transactionRef: String(paymentInfo.id),
                         },
                     }),
-                ])
+                ]
+
+                // D. 🔑 SI ES UNA RESERVA DE CUMPLEAÑOS: Confirmar el Booking
+                if (order.bookingId) {
+                    transactionOperations.push(
+                        prisma.booking.update({
+                            where: { id: order.bookingId },
+                            data: {
+                                status: BookingStatus.CONFIRMED,
+                                depositPaid: paymentInfo.transaction_amount || order.total,
+                            },
+                        })
+                    )
+                }
+
+                // Ejecutar transacción atómica en PostgreSQL
+                await prisma.$transaction(transactionOperations)
 
                 console.log(`[MP Webhook] Orden ${orderNumber} confirmada exitosamente.`)
 
-                // 3. Disparar envío de correo con los códigos QR al cliente
+                // 3. Disparar envío de correo con los detalles/códigos QR al cliente
                 if (order.customer?.email) {
                     try {
                         await sendTicketEmail(
@@ -102,13 +118,27 @@ export async function POST(request: Request) {
             }
             // 5. Si el pago fue RECHAZADO o CANCELADO
             else if (paymentInfo.status === "rejected" || paymentInfo.status === "cancelled") {
-                await prisma.order.update({
-                    where: { id: order.id },
-                    data: {
-                        status: OrderStatus.CANCELLED,
-                        mpPaymentId: String(paymentInfo.id),
-                    },
-                })
+                const cancelOperations: any[] = [
+                    prisma.order.update({
+                        where: { id: order.id },
+                        data: {
+                            status: OrderStatus.CANCELLED,
+                            mpPaymentId: String(paymentInfo.id),
+                        },
+                    }),
+                ]
+
+                // Si era un cumpleaños y rebotó el pago, cancelar la reserva
+                if (order.bookingId) {
+                    cancelOperations.push(
+                        prisma.booking.update({
+                            where: { id: order.bookingId },
+                            data: { status: BookingStatus.CANCELLED },
+                        })
+                    )
+                }
+
+                await prisma.$transaction(cancelOperations)
                 console.log(`[MP Webhook] Orden ${orderNumber} fue ${paymentInfo.status}.`)
             }
         }

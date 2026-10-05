@@ -1,13 +1,15 @@
 "use client"
 
 import { useEffect, useState } from "react"
-import Link from "next/link"
 import { getPartyRoomsData } from "@/app/actions/partyActions"
 import { PartyRoomShowcase } from "@/app/dashboard/parties/components/PartyRoomShowCase"
+import { PublicPartyBookingModal } from "./PublicPartyBookingModal"
 
 export function PartiesSection() {
     const [rooms, setRooms] = useState<any[]>([])
     const [loading, setLoading] = useState(true)
+    const [selectedRoom, setSelectedRoom] = useState<any | null>(null)
+    const [isModalOpen, setIsModalOpen] = useState(false)
 
     useEffect(() => {
         async function loadRooms() {
@@ -19,6 +21,16 @@ export function PartiesSection() {
         }
         loadRooms()
     }, [])
+
+    const handleOpenBooking = (room?: any) => {
+        const targetRoom = room || (rooms.length > 0 ? rooms[0] : null)
+        if (!targetRoom) {
+            alert("No hay salones disponibles para reservar en este momento.")
+            return
+        }
+        setSelectedRoom(targetRoom)
+        setIsModalOpen(true)
+    }
 
     return (
         <section id="cumpleanos" className="py-20 bg-slate-100/70 border-y border-slate-200/80">
@@ -46,23 +58,33 @@ export function PartiesSection() {
                     </div>
                 ) : rooms.length > 0 ? (
                     <div className="space-y-8">
-                        <PartyRoomShowcase roomsInfo={rooms} />
+                        {/* 🔑 VÍNCULO CORRECTO CON onSelectRoomToBook DE PartyRoomShowcase */}
+                        <PartyRoomShowcase
+                            roomsInfo={rooms}
+                            onSelectRoomToBook={(roomId: string) => {
+                                const found = rooms.find((r) => r.id === roomId)
+                                if (found) {
+                                    handleOpenBooking(found)
+                                }
+                            }}
+                        />
 
                         {/* CTA RESERVAS CUMPLEAÑOS */}
                         <div className="bg-white border border-slate-200 rounded-3xl p-8 flex flex-col sm:flex-row items-center justify-between gap-6 shadow-xs">
                             <div className="space-y-1">
                                 <h3 className="text-lg font-black text-slate-900">¿Quieres agendar un cumpleaños?</h3>
                                 <p className="text-xs text-slate-500 font-medium">
-                                    Consulta disponibilidad de fechas y salones VIP directamente en la administración.
+                                    Reserva online tu fecha y salón abonando la seña directamente por Mercado Pago.
                                 </p>
                             </div>
 
-                            <Link
-                                href="/dashboard/parties"
+                            <button
+                                type="button"
+                                onClick={() => handleOpenBooking()}
                                 className="bg-pokido-purple hover:bg-pokido-purple/90 text-white font-black px-6 py-3.5 rounded-2xl transition text-xs shadow-lg shadow-pokido-purple/20 cursor-pointer whitespace-nowrap"
                             >
-                                Agendar Evento ➔
-                            </Link>
+                                Agendar Evento Online ➔
+                            </button>
                         </div>
                     </div>
                 ) : (
@@ -71,6 +93,14 @@ export function PartiesSection() {
                     </div>
                 )}
             </div>
+
+            {/* MODAL PÚBLICO DE RESERVA DE CUMPLEAÑOS */}
+            {isModalOpen && selectedRoom && (
+                <PublicPartyBookingModal
+                    room={selectedRoom}
+                    onClose={() => setIsModalOpen(false)}
+                />
+            )}
         </section>
     )
 }

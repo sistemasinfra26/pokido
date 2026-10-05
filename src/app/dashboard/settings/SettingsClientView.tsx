@@ -3,21 +3,25 @@
 import { useEffect, useState } from "react"
 import { getTicketTypes } from "@/app/actions/ticketTypeActions"
 import { getAllPartyRooms } from "@/app/actions/partyActions"
+import { getPartyDepositPercentage } from "@/app/actions/systemSettingsActions" // 🔑 Importado desde systemSettingsActions
 import { TicketType, PartyRoom } from "./types"
 import { TicketSettingsTab } from "./components/TicketSettingsTab"
 import { RoomSettingsTab } from "./components/RoomSettingsTab"
+import { PartyDepositSettingsCard } from "./components/PorcentsSettings"
 
 export default function SettingsClientView() {
-    const [activeTab, setActiveTab] = useState<"tickets" | "rooms">("rooms")
+    const [activeTab, setActiveTab] = useState<"tickets" | "rooms" | "deposit">("rooms")
     const [loading, setLoading] = useState(true)
     const [ticketTypes, setTicketTypes] = useState<TicketType[]>([])
     const [partyRooms, setPartyRooms] = useState<PartyRoom[]>([])
+    const [depositPercentage, setDepositPercentage] = useState<number>(30)
 
     const loadData = async () => {
         setLoading(true)
-        const [resTickets, resRooms] = await Promise.all([
+        const [resTickets, resRooms, currentPercentage] = await Promise.all([
             getTicketTypes(),
             getAllPartyRooms(),
+            getPartyDepositPercentage(),
         ])
         setLoading(false)
 
@@ -32,6 +36,10 @@ export default function SettingsClientView() {
 
         if (resRooms.success && resRooms.rooms) {
             setPartyRooms(resRooms.rooms as any)
+        }
+
+        if (typeof currentPercentage === "number") {
+            setDepositPercentage(currentPercentage)
         }
     }
 
@@ -55,7 +63,7 @@ export default function SettingsClientView() {
                         <span>⚙️</span> Configuración General de Pokido Park
                     </h1>
                     <p className="text-xs text-slate-400 mt-0.5">
-                        Personaliza costos de entradas, duraciones y los datos comerciales de tus salones de eventos.
+                        Personaliza costos de entradas, duraciones, señas comerciales y salones de eventos.
                     </p>
                 </div>
 
@@ -80,13 +88,31 @@ export default function SettingsClientView() {
                     >
                         🎪 Salones de Cumpleaños
                     </button>
+                    <button
+                        type="button"
+                        onClick={() => setActiveTab("deposit")}
+                        className={`px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer ${activeTab === "deposit"
+                                ? "bg-white text-slate-900 shadow-sm"
+                                : "text-slate-500 hover:text-slate-900"
+                            }`}
+                    >
+                        💰 Señas y Reservas
+                    </button>
                 </div>
             </div>
 
-            {activeTab === "tickets" ? (
+            {activeTab === "tickets" && (
                 <TicketSettingsTab ticketTypes={ticketTypes} onReload={loadData} />
-            ) : (
+            )}
+
+            {activeTab === "rooms" && (
                 <RoomSettingsTab partyRooms={partyRooms} onReload={loadData} />
+            )}
+
+            {activeTab === "deposit" && (
+                <div className="max-w-xl">
+                    <PartyDepositSettingsCard initialPercentage={depositPercentage} onReload={loadData} />
+                </div>
             )}
         </div>
     )

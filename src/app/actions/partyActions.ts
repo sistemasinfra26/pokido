@@ -1,21 +1,26 @@
 "use server"
 
 import { prisma } from "@/lib/prisma"
-import { BookingStatus, WristbandStatus } from "@prisma/client"
+import { BookingStatus, SalesChannel, OrderStatus, WristbandStatus } from "@prisma/client"
 import { revalidatePath } from "next/cache"
+import { createMercadoPagoPreference } from "./checkoutActions"
 
-export interface PartyRoomInput {
-    id?: string
-    name: string
-    capacity: number
-    recommendedFor?: string
-    description?: string
-    imageUrl?: string
-    includes?: string[]
-    isActive?: boolean
+export interface CreateOnlinePartyBookingInput {
+    roomId: string
+    customerDni: string
+    customerName: string
+    customerPhone: string
+    customerEmail?: string
+    birthdayChild: string
+    childAge: number
+    guestCount: number
+    dateStr: string
+    startTimeStr: string
+    endTimeStr: string
+    totalPrice: number
 }
 
-// Helper para convertir instancias de Decimal y Dates a tipos primitivos seguros
+// 🔑 Helpers para convertir Decimal y Date a tipos primitivos JSON serializables
 function sanitizeBooking(b: any) {
     if (!b) return null
     return {
@@ -26,6 +31,147 @@ function sanitizeBooking(b: any) {
         createdAt: b.createdAt instanceof Date ? b.createdAt.toISOString() : b.createdAt,
         updatedAt: b.updatedAt instanceof Date ? b.updatedAt.toISOString() : b.updatedAt,
     }
+}
+
+function sanitizeRoom(room: any) {
+    if (!room) return null
+    return {
+        ...room,
+        basePrice: room.basePrice ? Number(room.basePrice) : 0,
+        extraGuestPrice: room.extraGuestPrice ? Number(room.extraGuestPrice) : 0,
+        createdAt: room.createdAt instanceof Date ? room.createdAt.toISOString() : room.createdAt,
+        updatedAt: room.updatedAt instanceof Date ? room.updatedAt.toISOString() : room.updatedAt,
+    }
+}
+
+// 🔑 Crea reserva de cumpleaños y redirige a Mercado Pago
+export async function createOnlinePartyBooking(data: CreateOnlinePartyBookingInput) {
+    try {
+        const [year, month, day] = data.dateStr.split("-").map(Number)
+        const bookingDate = new Date(year, month - 1, day, 0, 0, 0)
+
+        // 0. Validar si el salón ya está reservado para esa fecha y horario
+        const existingBooking = await prisma.booking.findFirst({
+            where: {
+                roomId: data.roomId,
+                date: bookingDate,
+                startTime: data.startTimeStr,
+                status: { in: [BookingStatus.CONFIRMED, BookingStatus.IN_PROGRESS] },
+            },
+        })
+
+        if (existingBooking) {
+            return { success: false, error: "El salón seleccionado ya está reservado para esta fecha y horario." }
+        }
+
+        // 1. Crear o actualizar el cliente
+        let customer = await prisma.customer.findUnique({ where: { dni: data.customerDni } })
+
+        if (!customer) {
+            customer = await prisma.customer.create({
+                data: {
+                    dni: data.customerDni,
+                    fullName: data.customerName,
+                    phone: data.customerPhone,
+                    email: data.customerEmail || `${data.customerDni}@pokido.temp`,
+                },
+            })
+        } else if (data.customerEmail && customer.email !== data.customerEmail) {
+            customer = await prisma.customer.update({
+                where: { id: customer.id },
+                data: { email: data.customerEmail, phone: data.customerPhone },
+            })
+        }
+
+        // 2. Crear reserva en PENDING
+        const rawBooking = await prisma.booking.create({
+            data: {
+                roomId: data.roomId,
+                customerId: customer.id,
+                birthdayChild: data.birthdayChild,
+                childAge: data.childAge,
+                guestCount: data.guestCount,
+                date: bookingDate,
+                startTime: data.startTimeStr,
+                endTime: data.endTimeStr,
+                status: BookingStatus.PENDING,
+                totalPrice: data.totalPrice,
+                depositPaid: 0,
+            },
+        })
+
+        // 3. Crear Orden de Venta vinculada
+        const count = await prisma.order.count()
+        const orderNumber = `CUMPLE-${new Date().getFullYear()}-${String(count + 1).padStart(5, "0")}`
+
+        const room = await prisma.partyRoom.findUnique({ where: { id: data.roomId } })
+
+        const order = await prisma.order.create({
+            data: {
+                orderNumber,
+                channel: SalesChannel.WEB,
+                customerId: customer.id,
+                bookingId: rawBooking.id,
+                subtotal: data.totalPrice,
+                total: data.totalPrice,
+                status: OrderStatus.PENDING,
+                items: {
+                    create: {
+                        description: `Seña Fiesta - ${room?.name || "Salón"} (${data.birthdayChild})`,
+                        quantity: 1,
+                        unitPrice: data.totalPrice,
+                        total: data.totalPrice,
+                    },
+                },
+            },
+        })
+
+        // 4. GENERAR PREFERENCIA EN MERCADO PAGO
+        const mpResult = await createMercadoPagoPreference(order.id)
+
+        // 🔑 ROLLBACK EN CASO DE ERROR DE MERCADO PAGO
+        if (!mpResult.success) {
+            await prisma.booking.update({
+                where: { id: rawBooking.id },
+                data: { status: BookingStatus.CANCELLED },
+            })
+
+            await prisma.order.update({
+                where: { id: order.id },
+                data: { status: OrderStatus.CANCELLED },
+            })
+
+            return { success: false, error: mpResult.error }
+        }
+
+        revalidatePath("/dashboard/parties")
+
+        return {
+            success: true,
+            initPoint: mpResult.initPoint,
+            preferenceId: mpResult.preferenceId,
+            booking: sanitizeBooking(rawBooking),
+        }
+    } catch (error: any) {
+        console.error("Error al crear reserva online de cumpleaños:", error)
+        return { success: false, error: error.message }
+    }
+}
+
+export interface PartyRoomInput {
+    id?: string
+    name: string
+    capacity: number
+    recommendedFor?: string
+    description?: string
+    imageUrl?: string
+    includes?: string[]
+    isActive?: boolean
+    price?: number
+    basePrice?: number
+    minGuests?: number
+    extraGuestPrice?: number
+    depositRequired?: boolean
 }
 
 // Obtener la lista de salones, reservas de cumpleaños de hoy Y los niños activos en parque
@@ -59,9 +205,9 @@ export async function getPartyRoomsData() {
             },
         })
 
-        // Sanitizamos los Decimal dentro de las reservas de cada salón
+        // 🔑 Sanitizamos tanto la sala como sus reservas
         const rooms = rawRooms.map((room) => ({
-            ...room,
+            ...sanitizeRoom(room),
             bookings: room.bookings.map((b) => sanitizeBooking(b)),
         }))
 
@@ -101,7 +247,7 @@ export interface CreatePartyBookingInput {
     totalPrice?: number
 }
 
-// Crear reserva de cumpleaños vinculada al modelo Booking
+// Crear reserva de cumpleaños presencial / POS vinculada al modelo Booking
 export async function createPartyBooking(data: CreatePartyBookingInput) {
     try {
         let customer = await prisma.customer.findUnique({
@@ -143,7 +289,6 @@ export async function createPartyBooking(data: CreatePartyBookingInput) {
         revalidatePath("/dashboard/pos")
         revalidatePath("/dashboard/access")
 
-        // 🔑 Sanitizado antes de retornar al Client Component
         return { success: true, booking: sanitizeBooking(rawBooking) }
     } catch (error: any) {
         console.error("Error al crear reserva de cumpleaños:", error)
@@ -157,27 +302,33 @@ export async function getAllPartyRooms() {
         const rooms = await prisma.partyRoom.findMany({
             orderBy: { name: "asc" },
         })
-        return { success: true, rooms }
+
+        // 🔑 Sanitizamos los salones para convertir Decimal a number
+        const sanitizedRooms = rooms.map((room) => sanitizeRoom(room))
+
+        return { success: true, rooms: sanitizedRooms }
     } catch (error: any) {
         return { success: false, error: error.message }
     }
 }
 
-// Crear o Actualizar un Salón de Cumpleaños sin errores de tipos en Prisma
 export async function upsertPartyRoom(data: PartyRoomInput) {
     try {
         const payload = {
             name: data.name,
-            capacity: data.capacity,
+            capacity: Number(data.capacity) || 30,
+            basePrice: data.basePrice !== undefined ? Number(data.basePrice) : 35000,
+            minGuests: data.minGuests !== undefined ? Number(data.minGuests) : 10,
+            extraGuestPrice: data.extraGuestPrice !== undefined ? Number(data.extraGuestPrice) : 3000,
+            depositRequired: data.depositRequired !== undefined ? Boolean(data.depositRequired) : true,
             description: data.description || "",
             imageUrl: data.imageUrl || "https://images.unsplash.com/photo-1530103862676-de8c9debad1d?w=600&auto=format&fit=crop&q=80",
             recommendedFor: data.recommendedFor || "Grupos generales",
-            includes: data.includes || [],
+            includes: Array.isArray(data.includes) ? data.includes : [],
         }
 
         let room
-        if (data.id) {
-            // 🔑 CORRECCIÓN: Agregamos ".partyRoom" antes de ".update"
+        if (data.id && data.id.trim() !== "") {
             room = await prisma.partyRoom.update({
                 where: { id: data.id },
                 data: payload,
@@ -194,9 +345,10 @@ export async function upsertPartyRoom(data: PartyRoomInput) {
         revalidatePath("/dashboard/parties")
         revalidatePath("/dashboard/settings")
 
-        return { success: true, room }
+        return { success: true, room: sanitizeRoom(room) }
     } catch (error: any) {
-        return { success: false, error: error.message }
+        console.error("Error en upsertPartyRoom:", error)
+        return { success: false, error: error.message || "Error al guardar el salón." }
     }
 }
 

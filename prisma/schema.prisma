@@ -254,17 +254,23 @@ model AccessLog {
 // ==========================================
 
 model PartyRoom {
-  id             String    @id @default(uuid())
-  name           String // Ej: "Sala Galaxia", "Sala Aventura"
-  capacity       Int       @default(30)
-  color          String?
-  description    String?
-  imageUrl       String?   @map("image_url")
-  recommendedFor String?   @map("recommended_for")
-  includes       String[]
-  isActive       Boolean   @default(true) @map("is_active")
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
+  id              String   @id @default(uuid())
+  name            String   // Ej: "Sala Galaxia", "Sala Aventura"
+  capacity        Int      @default(30)
+  color           String?
+  description     String?
+  imageUrl        String?  @map("image_url")
+  recommendedFor  String?  @map("recommended_for")
+  includes        String[]
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  // 🔑 Campos de Precios y Reglas Comercial
+  basePrice       Decimal  @default(35000) @db.Decimal(10, 2) @map("base_price")
+  minGuests       Int      @default(10) @map("min_guests")
+  extraGuestPrice Decimal  @default(3000) @db.Decimal(10, 2) @map("extra_guest_price")
+  depositRequired Boolean  @default(true) @map("deposit_required")
 
   bookings Booking[]
 
@@ -481,4 +487,19 @@ model Payment {
   shift CashShift? @relation(fields: [shiftId], references: [id])
 
   @@map("payments")
+}
+
+// ==========================================
+// 8. CONFIGURACIONES DEL SISTEMA
+// ==========================================
+
+model SystemSetting {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  value       String
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("system_settings")
 }

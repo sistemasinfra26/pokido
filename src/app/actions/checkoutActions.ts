@@ -14,11 +14,12 @@ export async function createMercadoPagoPreference(orderId: string) {
             return { success: false, error: "La configuración de Mercado Pago no está definida en las variables de entorno." }
         }
 
-        // 1. Obtener la orden con sus datos, cliente y pases asociados
+        // 1. Obtener la orden con sus datos, cliente, tickets o reserva de cumpleaños
         const order = await prisma.order.findUnique({
             where: { id: orderId },
             include: {
                 customer: true,
+                items: true,
                 tickets: {
                     include: {
                         ticketType: true,
@@ -32,8 +33,8 @@ export async function createMercadoPagoPreference(orderId: string) {
             return { success: false, error: "La orden especificada no existe o no tiene un cliente asociado." }
         }
 
-        // 2. Mapear los ítems cobrados (tickets de los menores)
-        const items = order.tickets.map((ticket) => ({
+        // 2. Mapear los ítems cobrados
+        let preferenceItems = order.tickets.map((ticket) => ({
             id: ticket.id,
             title: `Pase Pokiddo Park - ${ticket.ticketType?.name || "Entrada"} (${ticket.minor?.fullName || "Menor"})`,
             unit_price: Number(ticket.price),
@@ -41,21 +42,39 @@ export async function createMercadoPagoPreference(orderId: string) {
             currency_id: "ARS",
         }))
 
-        // Si por alguna razón no hay tickets detallados, usar el total global de la orden
-        const preferenceItems = items.length > 0 ? items : [
-            {
-                id: order.id,
-                title: `Reserva Pokiddo Park - Orden ${order.orderNumber}`,
-                unit_price: Number(order.total),
-                quantity: 1,
+        // Si es una reserva de cumpleaños o venta general sin tickets individuales
+        if (preferenceItems.length === 0 && order.items.length > 0) {
+            preferenceItems = order.items.map((item) => ({
+                id: item.id,
+                title: item.description || `Orden Pokiddo Park #${order.orderNumber}`,
+                unit_price: Number(item.unitPrice),
+                quantity: item.quantity,
                 currency_id: "ARS",
-            }
-        ]
+            }))
+        }
 
-        // 3. Determinar la URL base dinámica para los retornos
-        const baseUrl = (process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000").replace(/\/$/, "")
+        // Fallback global si no hay ítems detallados
+        if (preferenceItems.length === 0) {
+            preferenceItems = [
+                {
+                    id: order.id,
+                    title: `Reserva Pokiddo Park - Orden ${order.orderNumber}`,
+                    unit_price: Number(order.total),
+                    quantity: 1,
+                    currency_id: "ARS",
+                },
+            ]
+        }
 
-        // 4. Instanciar el servicio de Preferencias y construir el objeto de cobro
+        // 3. Determinar la URL base dinámica para los retornos de manera segura
+        const rawBaseUrl = process.env.NEXT_PUBLIC_BASE_URL || process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
+        const baseUrl = rawBaseUrl.startsWith("http") ? rawBaseUrl.replace(/\/$/, "") : `https://${rawBaseUrl.replace(/\/$/, "")}`
+
+        const successUrl = `${baseUrl}/reserva/confirmacion?order=${order.orderNumber}&status=approved`
+        const failureUrl = `${baseUrl}/reserva?status=rejected`
+        const pendingUrl = `${baseUrl}/reserva/confirmacion?order=${order.orderNumber}&status=pending`
+
+        // 4. Instanciar el servicio de Preferencias
         const preferenceApi = new Preference(client)
 
         const preferenceResponse = await preferenceApi.create({
@@ -74,9 +93,9 @@ export async function createMercadoPagoPreference(orderId: string) {
                 },
                 external_reference: order.orderNumber, // 🔑 Vínculo con el webhook
                 back_urls: {
-                    success: `${baseUrl}/reserva/confirmacion?order=${order.orderNumber}&status=approved`,
-                    failure: `${baseUrl}/reserva?status=rejected`,
-                    pending: `${baseUrl}/reserva/confirmacion?order=${order.orderNumber}&status=pending`,
+                    success: successUrl,
+                    failure: failureUrl,
+                    pending: pendingUrl,
                 },
                 auto_return: "approved",
                 notification_url: `${baseUrl}/api/webhooks/mercadopago`, // 🔑 URL pública del webhook
@@ -91,7 +110,7 @@ export async function createMercadoPagoPreference(orderId: string) {
             },
         })
 
-        // Retornar la URL de redirección (usando init_point o sandbox_init_point)
+        // Retornar la URL de redirección
         const initPoint = process.env.NODE_ENV === "production"
             ? preferenceResponse.init_point
             : (preferenceResponse.sandbox_init_point || preferenceResponse.init_point)
