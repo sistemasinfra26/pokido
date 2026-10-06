@@ -78,6 +78,17 @@ export function Sidebar() {
                 </svg>
             )
         },
+        // 🔑 NUEVO: Reportes y Métricas (Acceso exclusivo Administradores / Gerentes)
+        {
+            name: "Reportes y Métricas",
+            href: "/dashboard/reports",
+            roles: ["ADMIN", "SUPERADMIN", "MANAGER", "admin"],
+            icon: (
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M9 19v-6a2 2 0 012-2h2a2 2 0 012 2v6m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+            )
+        },
         {
             name: "Clientes y Waivers",
             href: "/dashboard/customers",
@@ -111,7 +122,7 @@ export function Sidebar() {
         },
     ]
 
-    // 4. Filtrar ítems visibles
+    // 4. Filtrar ítems visibles según el rol del usuario
     const visibleNavigation = navigation.filter(item =>
         item.roles.includes(userRole) || item.roles.includes(String(rawRole))
     )
