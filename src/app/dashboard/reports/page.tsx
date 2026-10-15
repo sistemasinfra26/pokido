@@ -1,7 +1,11 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { getFinancialReports, getOperationalReports } from "@/app/actions/reportActions"
+import {
+    getFinancialReports,
+    getOperationalReports,
+    getPeakHoursReport
+} from "@/app/actions/reportActions"
 import {
     BarChart,
     Bar,
@@ -15,6 +19,17 @@ import {
     Cell,
     Legend
 } from "recharts"
+
+// Configuración de los 7 días de la semana
+const WEEK_DAYS = [
+    { key: "Lun", name: "Lunes", color: "#38bdf8" },
+    { key: "Mar", name: "Martes", color: "#0284c7" },
+    { key: "Mié", name: "Miércoles", color: "#06b6d4" },
+    { key: "Jue", name: "Jueves", color: "#0891b2" },
+    { key: "Vie", name: "Viernes", color: "#9333ea" },
+    { key: "Sáb", name: "Sábado", color: "#7e22ce" },
+    { key: "Dom", name: "Domingo", color: "#6b21a8" },
+]
 
 export default function ReportsPage() {
     const [loading, setLoading] = useState(true)
@@ -36,6 +51,8 @@ export default function ReportsPage() {
         totalChildrenInPark: 0,
     })
 
+    const [peakHoursData, setPeakHoursData] = useState<any[]>([])
+
     const loadReports = async () => {
         setLoading(true)
 
@@ -53,9 +70,10 @@ export default function ReportsPage() {
             startDate = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0)
         }
 
-        const [resFin, resOp] = await Promise.all([
+        const [resFin, resOp, resPeak] = await Promise.all([
             getFinancialReports({ startDate, endDate }),
             getOperationalReports({ startDate, endDate }),
+            getPeakHoursReport({ startDate, endDate }),
         ])
 
         if (resFin.success && resFin.data) {
@@ -64,6 +82,10 @@ export default function ReportsPage() {
 
         if (resOp.success && resOp.data) {
             setOperations(resOp.data)
+        }
+
+        if (resPeak.success && resPeak.data) {
+            setPeakHoursData(resPeak.data)
         }
 
         setLoading(false)
@@ -102,8 +124,8 @@ export default function ReportsPage() {
                         type="button"
                         onClick={() => setDateRange("today")}
                         className={`px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer ${dateRange === "today"
-                                ? "bg-white text-slate-900 shadow-sm"
-                                : "text-slate-500 hover:text-slate-900"
+                            ? "bg-white text-slate-900 shadow-sm"
+                            : "text-slate-500 hover:text-slate-900"
                             }`}
                     >
                         Hoy
@@ -112,8 +134,8 @@ export default function ReportsPage() {
                         type="button"
                         onClick={() => setDateRange("week")}
                         className={`px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer ${dateRange === "week"
-                                ? "bg-white text-slate-900 shadow-sm"
-                                : "text-slate-500 hover:text-slate-900"
+                            ? "bg-white text-slate-900 shadow-sm"
+                            : "text-slate-500 hover:text-slate-900"
                             }`}
                     >
                         Esta Semana
@@ -122,8 +144,8 @@ export default function ReportsPage() {
                         type="button"
                         onClick={() => setDateRange("month")}
                         className={`px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer ${dateRange === "month"
-                                ? "bg-white text-slate-900 shadow-sm"
-                                : "text-slate-500 hover:text-slate-900"
+                            ? "bg-white text-slate-900 shadow-sm"
+                            : "text-slate-500 hover:text-slate-900"
                             }`}
                     >
                         Este Mes
@@ -242,6 +264,46 @@ export default function ReportsPage() {
                                     </PieChart>
                                 </ResponsiveContainer>
                             </div>
+                        </div>
+                    </div>
+
+                    {/* GRÁFICO 3: HORARIOS PICO Y CONCENTRACIÓN DE PASES (7 DÍAS) */}
+                    <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm space-y-4">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                            <div>
+                                <h3 className="font-extrabold text-slate-900 text-sm flex items-center gap-2">
+                                    <span>🔥</span> Horarios Pico y Concentración de Pases
+                                </h3>
+                                <p className="text-xs text-slate-400">
+                                    Afluencia distribuida a lo largo de los 7 días de la semana por franja horaria.
+                                </p>
+                            </div>
+                        </div>
+
+                        <div className="h-72 w-full pt-2">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={peakHoursData} margin={{ top: 10, right: 10, left: 0, bottom: 5 }}>
+                                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                                    <XAxis dataKey="hora" axisLine={false} tickLine={false} tick={{ fontSize: 12, fontWeight: 700, fill: "#64748b" }} />
+                                    <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 11, fill: "#94a3b8" }} />
+                                    <Tooltip
+                                        contentStyle={{ borderRadius: "16px", border: "1px solid #e2e8f0", boxShadow: "0 10px 15px -3px rgb(0 0 0 / 0.1)" }}
+                                        formatter={(value: any, name: any) => [`${value} pases`, `Día: ${name}`]}
+                                    />
+                                    <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: "11px", fontWeight: "bold" }} />
+
+                                    {/*  Iteración dinámica sobre los 7 días de la semana */}
+                                    {WEEK_DAYS.map((day) => (
+                                        <Bar
+                                            key={day.key}
+                                            dataKey={day.key}
+                                            fill={day.color}
+                                            name={day.name}
+                                            radius={[4, 4, 0, 0]}
+                                        />
+                                    ))}
+                                </BarChart>
+                            </ResponsiveContainer>
                         </div>
                     </div>
                 </>

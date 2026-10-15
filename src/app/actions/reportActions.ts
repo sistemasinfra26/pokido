@@ -126,3 +126,58 @@ export async function getOperationalReports(filter: ReportFilterInput) {
         return { success: false, error: error.message }
     }
 }
+
+export async function getPeakHoursReport(filter: ReportFilterInput) {
+    try {
+        const { startDate, endDate } = filter
+
+        // Obtener todos los tickets activos o usados en el rango seleccionado
+        const tickets = await prisma.ticket.findMany({
+            where: {
+                validDate: {
+                    gte: startDate,
+                    lte: endDate,
+                },
+                status: { in: ["ACTIVE", "IN_USE", "USED"] },
+            },
+            select: {
+                startTime: true,
+                validDate: true,
+            },
+        })
+
+        // Mapeo de días de la semana y bloques horarios (10:00 - 21:00)
+        const daysMap = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"]
+        const hourBlocks = ["10:00", "12:00", "14:00", "16:00", "18:00", "20:00"]
+
+        const hourlyDistribution = hourBlocks.map((hour) => {
+            const row: Record<string, any> = { hora: hour }
+            daysMap.forEach((day) => {
+                row[day] = 0
+            })
+            return row
+        })
+
+        // Conteo y agrupación por hora y día
+        tickets.forEach((t) => {
+            if (t.validDate) {
+                const dayName = daysMap[new Date(t.validDate).getDay()]
+                const hour = t.startTime ? new Date(t.startTime).getHours() : 16
+
+                // Encontrar el bloque correspondiente
+                const blockIndex = Math.min(Math.floor((hour - 10) / 2), hourBlocks.length - 1)
+                if (blockIndex >= 0 && hourlyDistribution[blockIndex]) {
+                    hourlyDistribution[blockIndex][dayName] += 1
+                }
+            }
+        })
+
+        return {
+            success: true,
+            data: hourlyDistribution,
+        }
+    } catch (error: any) {
+        console.error("Error al obtener reporte de horas pico:", error)
+        return { success: false, error: error.message }
+    }
+}

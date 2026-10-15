@@ -60,7 +60,7 @@ export default function SettingsClientView() {
             <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
                     <h1 className="text-xl font-bold text-slate-900 flex items-center gap-2">
-                        <span>⚙️</span> Configuración General de Pokido Park
+                        <span>⚙️</span> Configuración General de Pokiddo Park
                     </h1>
                     <p className="text-xs text-slate-400 mt-0.5">
                         Personaliza costos de entradas, duraciones, señas comerciales y salones de eventos.
@@ -72,8 +72,8 @@ export default function SettingsClientView() {
                         type="button"
                         onClick={() => setActiveTab("tickets")}
                         className={`px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer ${activeTab === "tickets"
-                                ? "bg-white text-slate-900 shadow-sm"
-                                : "text-slate-500 hover:text-slate-900"
+                            ? "bg-white text-slate-900 shadow-sm"
+                            : "text-slate-500 hover:text-slate-900"
                             }`}
                     >
                         ⏱️ Pases y Tarifas
@@ -82,8 +82,8 @@ export default function SettingsClientView() {
                         type="button"
                         onClick={() => setActiveTab("rooms")}
                         className={`px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer ${activeTab === "rooms"
-                                ? "bg-white text-slate-900 shadow-sm"
-                                : "text-slate-500 hover:text-slate-900"
+                            ? "bg-white text-slate-900 shadow-sm"
+                            : "text-slate-500 hover:text-slate-900"
                             }`}
                     >
                         🎪 Salones de Cumpleaños
@@ -92,8 +92,8 @@ export default function SettingsClientView() {
                         type="button"
                         onClick={() => setActiveTab("deposit")}
                         className={`px-4 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer ${activeTab === "deposit"
-                                ? "bg-white text-slate-900 shadow-sm"
-                                : "text-slate-500 hover:text-slate-900"
+                            ? "bg-white text-slate-900 shadow-sm"
+                            : "text-slate-500 hover:text-slate-900"
                             }`}
                     >
                         💰 Señas y Reservas
